@@ -1,6 +1,5 @@
 import {
   ChevronRightIcon,
-  FolderIcon,
   GitPullRequestIcon,
   RocketIcon,
   SquarePenIcon,
@@ -32,6 +31,8 @@ import { readNativeApi } from "../nativeApi";
 import { type DraftThreadEnvMode, useComposerDraftStore } from "../composerDraftStore";
 import { selectThreadTerminalState, useTerminalStateStore } from "../terminalStateStore";
 import { toastManager } from "./ui/toast";
+import ProjectFavicon from "./ProjectFavicon";
+import ProjectThreadPickerDialog from "./ProjectThreadPickerDialog";
 import {
   getDesktopUpdateActionError,
   getDesktopUpdateButtonTooltip,
@@ -213,50 +214,6 @@ function T3Wordmark() {
   );
 }
 
-/**
- * Derives the server's HTTP origin (scheme + host + port) from the same
- * sources WsTransport uses, converting ws(s) to http(s).
- */
-function getServerHttpOrigin(): string {
-  const bridgeUrl = window.desktopBridge?.getWsUrl();
-  const envUrl = import.meta.env.VITE_WS_URL as string | undefined;
-  const wsUrl =
-    bridgeUrl && bridgeUrl.length > 0
-      ? bridgeUrl
-      : envUrl && envUrl.length > 0
-        ? envUrl
-        : `ws://${window.location.hostname}:${window.location.port}`;
-  // Parse to extract just the origin, dropping path/query (e.g. ?token=…)
-  const httpUrl = wsUrl.replace(/^wss:/, "https:").replace(/^ws:/, "http:");
-  try {
-    return new URL(httpUrl).origin;
-  } catch {
-    return httpUrl;
-  }
-}
-
-const serverHttpOrigin = getServerHttpOrigin();
-
-function ProjectFavicon({ cwd }: { cwd: string }) {
-  const [status, setStatus] = useState<"loading" | "loaded" | "error">("loading");
-
-  const src = `${serverHttpOrigin}/api/project-favicon?cwd=${encodeURIComponent(cwd)}`;
-
-  if (status === "error") {
-    return <FolderIcon className="size-3.5 shrink-0 text-muted-foreground/50" />;
-  }
-
-  return (
-    <img
-      src={src}
-      alt=""
-      className={`size-3.5 shrink-0 rounded-sm object-contain ${status === "loading" ? "hidden" : ""}`}
-      onLoad={() => setStatus("loaded")}
-      onError={() => setStatus("error")}
-    />
-  );
-}
-
 export default function Sidebar() {
   const projects = useStore((store) => store.projects);
   const threads = useStore((store) => store.threads);
@@ -293,6 +250,7 @@ export default function Sidebar() {
   const [newCwd, setNewCwd] = useState("");
   const [isPickingFolder, setIsPickingFolder] = useState(false);
   const [isAddingProject, setIsAddingProject] = useState(false);
+  const [isProjectThreadPickerOpen, setIsProjectThreadPickerOpen] = useState(false);
   const [renamingThreadId, setRenamingThreadId] = useState<ThreadId | null>(null);
   const [renamingTitle, setRenamingTitle] = useState("");
   const [expandedThreadListsByProject, setExpandedThreadListsByProject] = useState<
@@ -359,6 +317,12 @@ export default function Sidebar() {
     }
     return map;
   }, [threadGitStatusCwds, threadGitStatusQueries, threadGitTargets]);
+  const activeThread = routeThreadId
+    ? threads.find((thread) => thread.id === routeThreadId)
+    : undefined;
+  const activeDraftThread = routeThreadId ? getDraftThread(routeThreadId) : null;
+  const activeProjectId =
+    activeThread?.projectId ?? activeDraftThread?.projectId ?? projects[0]?.id ?? null;
 
   const openPrLink = useCallback((event: React.MouseEvent<HTMLElement>, prUrl: string) => {
     event.preventDefault();
@@ -802,21 +766,14 @@ export default function Sidebar() {
 
   useEffect(() => {
     const onWindowKeyDown = (event: KeyboardEvent) => {
-      const activeThread = routeThreadId
-        ? threads.find((thread) => thread.id === routeThreadId)
-        : undefined;
-      const activeDraftThread = routeThreadId ? getDraftThread(routeThreadId) : null;
       if (isChatNewLocalShortcut(event, keybindings)) {
-        const projectId =
-          activeThread?.projectId ?? activeDraftThread?.projectId ?? projects[0]?.id;
-        if (!projectId) return;
         event.preventDefault();
-        void handleNewThread(projectId);
+        setIsProjectThreadPickerOpen(true);
         return;
       }
 
       if (!isChatNewShortcut(event, keybindings)) return;
-      const projectId = activeThread?.projectId ?? activeDraftThread?.projectId ?? projects[0]?.id;
+      const projectId = activeProjectId;
       if (!projectId) return;
       event.preventDefault();
       void handleNewThread(projectId, {
@@ -830,7 +787,7 @@ export default function Sidebar() {
     return () => {
       window.removeEventListener("keydown", onWindowKeyDown);
     };
-  }, [getDraftThread, handleNewThread, keybindings, projects, routeThreadId, threads]);
+  }, [activeDraftThread, activeProjectId, activeThread, handleNewThread, keybindings]);
 
   useEffect(() => {
     if (!isElectron) return;
@@ -1289,6 +1246,14 @@ export default function Sidebar() {
           )}
         </SidebarGroup>
       </SidebarContent>
+      <ProjectThreadPickerDialog
+        activeProjectId={activeProjectId}
+        onOpenChange={setIsProjectThreadPickerOpen}
+        onSelectProject={handleNewThread}
+        open={isProjectThreadPickerOpen}
+        projects={projects}
+        shortcutLabel={shortcutLabelForCommand(keybindings, "chat.newLocal")}
+      />
 
       <SidebarSeparator />
       <SidebarFooter className="gap-0 p-3">

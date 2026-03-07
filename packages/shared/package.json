@@ -19,6 +19,10 @@
     "./Net": {
       "types": "./src/Net.ts",
       "import": "./src/Net.ts"
+    },
+    "./search": {
+      "types": "./src/search.ts",
+      "import": "./src/search.ts"
     }
   },
   "scripts": {
