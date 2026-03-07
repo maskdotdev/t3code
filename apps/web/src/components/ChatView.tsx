@@ -731,6 +731,7 @@ export default function ChatView({ threadId }: ChatViewProps) {
     composerDraft.runtimeMode ?? activeThread?.runtimeMode ?? DEFAULT_RUNTIME_MODE;
   const interactionMode =
     composerDraft.interactionMode ?? activeThread?.interactionMode ?? DEFAULT_INTERACTION_MODE;
+  const isPlanMode = interactionMode === "plan";
   const isServerThread = serverThread !== undefined;
   const isLocalDraftThread = !isServerThread && localDraftThread !== undefined;
   const diffSearch = useMemo(
@@ -3585,7 +3586,12 @@ export default function ChatView({ threadId }: ChatViewProps) {
                   {/* Interaction mode toggle */}
                   <Button
                     variant="ghost"
-                    className="shrink-0 whitespace-nowrap px-2 text-muted-foreground/70 hover:text-foreground/80 sm:px-3"
+                    className={cn(
+                      "shrink-0 whitespace-nowrap px-2 sm:w-[4.75rem] sm:justify-center sm:px-3",
+                      isPlanMode
+                        ? "text-orange-500 hover:text-orange-600 dark:text-orange-300/90 dark:hover:text-orange-200"
+                        : "text-muted-foreground/70 hover:text-foreground/80",
+                    )}
                     size="sm"
                     type="button"
                     onClick={toggleInteractionMode}

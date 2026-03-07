@@ -814,7 +814,9 @@ describe("ChatView timeline estimator parity (full app)", () => {
 
     try {
       const initialModeButton = await waitForInteractionModeButton("Chat");
+      const initialModeButtonWidth = initialModeButton.getBoundingClientRect().width;
       expect(initialModeButton.title).toContain("enter plan mode");
+      expect(initialModeButton.className).not.toContain("text-orange-500");
 
       window.dispatchEvent(
         new KeyboardEvent("keydown", {
@@ -841,9 +843,10 @@ describe("ChatView timeline estimator parity (full app)", () => {
 
       await vi.waitFor(
         async () => {
-          expect((await waitForInteractionModeButton("Plan")).title).toContain(
-            "return to normal chat mode",
-          );
+          const planModeButton = await waitForInteractionModeButton("Plan");
+          expect(planModeButton.title).toContain("return to normal chat mode");
+          expect(planModeButton.className).toContain("text-orange-500");
+          expect(planModeButton.getBoundingClientRect().width).toBeCloseTo(initialModeButtonWidth, 4);
         },
         { timeout: 8_000, interval: 16 },
       );
@@ -859,7 +862,13 @@ describe("ChatView timeline estimator parity (full app)", () => {
 
       await vi.waitFor(
         async () => {
-          expect((await waitForInteractionModeButton("Chat")).title).toContain("enter plan mode");
+          const chatModeButton = await waitForInteractionModeButton("Chat");
+          expect(chatModeButton.title).toContain("enter plan mode");
+          expect(chatModeButton.className).not.toContain("text-orange-500");
+          expect(chatModeButton.getBoundingClientRect().width).toBeCloseTo(
+            initialModeButtonWidth,
+            4,
+          );
         },
         { timeout: 8_000, interval: 16 },
       );
