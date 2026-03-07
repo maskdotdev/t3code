@@ -194,6 +194,7 @@ import {
   setupProjectScript,
 } from "~/projectScripts";
 import { Toggle } from "./ui/toggle";
+import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "./ui/collapsible";
 import { SidebarTrigger } from "./ui/sidebar";
 import { newCommandId, newMessageId, newThreadId } from "~/lib/utils";
 import { readNativeApi } from "~/nativeApi";
@@ -261,10 +262,10 @@ function readLastInvokedScriptByProjectFromStorage(): Record<string, string> {
 }
 
 function workToneClass(tone: "thinking" | "tool" | "info" | "error"): string {
-  if (tone === "error") return "text-rose-300/50 dark:text-rose-300/50";
-  if (tone === "tool") return "text-muted-foreground/70";
-  if (tone === "thinking") return "text-muted-foreground/50";
-  return "text-muted-foreground/40";
+  if (tone === "error") return "text-rose-300/80 dark:text-rose-300/80";
+  if (tone === "tool") return "text-muted-foreground";
+  if (tone === "thinking") return "text-muted-foreground/75";
+  return "text-muted-foreground/65";
 }
 
 function normalizePlanMarkdownForExport(planMarkdown: string): string {
@@ -3287,7 +3288,7 @@ export default function ChatView({ threadId }: ChatViewProps) {
   // Empty state: no active thread
   if (!activeThread) {
     return (
-      <div className="flex min-h-0 min-w-0 flex-1 flex-col bg-background text-muted-foreground/40">
+      <div className="flex min-h-0 min-w-0 flex-1 flex-col bg-background text-muted-foreground/55">
         {!isElectron && (
           <header className="border-b border-border px-3 py-2 md:hidden">
             <div className="flex items-center gap-2">
@@ -3298,7 +3299,7 @@ export default function ChatView({ threadId }: ChatViewProps) {
         )}
         {isElectron && (
           <div className="drag-region flex h-[52px] shrink-0 items-center border-b border-border px-5">
-            <span className="text-xs text-muted-foreground/50">No active thread</span>
+            <span className="text-xs text-muted-foreground/65">No active thread</span>
           </div>
         )}
         <div className="flex flex-1 items-center justify-center">
@@ -4124,46 +4125,58 @@ interface PlanModePanelProps {
 }
 
 const PlanModePanel = memo(function PlanModePanel({ activePlan }: PlanModePanelProps) {
+  const [expanded, setExpanded] = useState(true);
+
   if (!activePlan) return null;
 
   return (
-    <div className="pt-3 mx-auto max-w-3xl">
-      <div className="rounded-xl border border-border/70 bg-muted/30 p-4">
-        <div className="flex items-center gap-2">
-          <Badge variant="secondary">Plan</Badge>
-          <span className="text-xs text-muted-foreground">
-            Updated {formatTimestamp(activePlan.createdAt)}
-          </span>
-        </div>
-        {activePlan.explanation ? (
-          <p className="mt-2 text-sm text-muted-foreground">{activePlan.explanation}</p>
-        ) : null}
-        <div className="mt-3 space-y-2">
-          {activePlan.steps.map((step) => (
-            <div
-              key={`${step.status}:${step.step}`}
-              className="flex items-start gap-3 rounded-lg border border-border/60 bg-background/80 px-3 py-2"
-            >
-              <Badge
-                variant={
-                  step.status === "completed"
-                    ? "default"
-                    : step.status === "inProgress"
-                      ? "secondary"
-                      : "outline"
-                }
-              >
-                {step.status === "inProgress"
-                  ? "In progress"
-                  : step.status === "completed"
-                    ? "Done"
-                    : "Pending"}
-              </Badge>
-              <div className="min-w-0 flex-1 text-sm">{step.step}</div>
+    <div className="mx-auto w-full max-w-3xl pt-3">
+      <Collapsible className="block w-full" open={expanded} onOpenChange={setExpanded}>
+        <div className="rounded-xl border border-border/70 bg-muted/30 p-4">
+          <CollapsibleTrigger className="flex w-full items-center gap-2">
+            <ChevronRightIcon
+              className={cn(
+                "size-3.5 shrink-0 text-muted-foreground transition-transform duration-200",
+                expanded && "rotate-90",
+              )}
+            />
+            <Badge variant="secondary">Plan</Badge>
+            <span className="text-xs text-muted-foreground">
+              Updated {formatTimestamp(activePlan.createdAt)}
+            </span>
+          </CollapsibleTrigger>
+          <CollapsibleContent>
+            {activePlan.explanation ? (
+              <p className="mt-2 text-sm text-muted-foreground">{activePlan.explanation}</p>
+            ) : null}
+            <div className="mt-3 space-y-2">
+              {activePlan.steps.map((step) => (
+                <div
+                  key={`${step.status}:${step.step}`}
+                  className="flex items-start gap-3 rounded-lg border border-border/60 bg-background/80 px-3 py-2"
+                >
+                  <Badge
+                    variant={
+                      step.status === "completed"
+                        ? "default"
+                        : step.status === "inProgress"
+                          ? "secondary"
+                          : "outline"
+                    }
+                  >
+                    {step.status === "inProgress"
+                      ? "In progress"
+                      : step.status === "completed"
+                        ? "Done"
+                        : "Pending"}
+                  </Badge>
+                  <div className="min-w-0 flex-1 text-sm">{step.step}</div>
+                </div>
+              ))}
             </div>
-          ))}
+          </CollapsibleContent>
         </div>
-      </div>
+      </Collapsible>
     </div>
   );
 });
@@ -4900,15 +4913,15 @@ const MessagesTimeline = memo(function MessagesTimeline({
               : `Work log (${groupedEntries.length})`;
 
           return (
-            <div className="rounded-lg border border-border/80 bg-card/45 px-3 py-2">
+            <div className="rounded-lg border border-border bg-card/50 px-3 py-2">
               <div className="mb-1.5 flex items-center justify-between gap-3">
-                <p className="text-[10px] uppercase tracking-[0.12em] text-muted-foreground/65">
+                <p className="text-[10px] uppercase tracking-[0.12em] text-muted-foreground/90">
                   {groupLabel}
                 </p>
                 {hasOverflow && (
                   <button
                     type="button"
-                    className="text-[10px] uppercase tracking-[0.12em] text-muted-foreground/55 transition-colors duration-150 hover:text-muted-foreground/80"
+                    className="text-[10px] uppercase tracking-[0.12em] text-muted-foreground/70 transition-colors duration-150 hover:text-muted-foreground"
                     onClick={() => onToggleWorkGroup(groupId)}
                   >
                     {isExpanded ? "Show less" : `Show ${hiddenCount} more`}
@@ -4918,7 +4931,7 @@ const MessagesTimeline = memo(function MessagesTimeline({
               <div className="space-y-1">
                 {visibleEntries.map((workEntry) => (
                   <div key={`work-row:${workEntry.id}`} className="flex items-start gap-2 py-0.5">
-                    <span className="mt-[7px] h-1.5 w-1.5 shrink-0 rounded-full bg-muted-foreground/30" />
+                    <span className="mt-[7px] h-1.5 w-1.5 shrink-0 rounded-full bg-muted-foreground/55" />
                     <p
                       className={`py-[2px] text-[11px] leading-relaxed ${workToneClass(workEntry.tone)}`}
                     >
@@ -4926,7 +4939,7 @@ const MessagesTimeline = memo(function MessagesTimeline({
                         <>
                           {workEntry.label}
                           <span
-                            className="ml-1.5 inline-block max-w-[70ch] truncate align-bottom font-mono text-[11px] opacity-60"
+                            className="ml-1.5 inline-block max-w-[70ch] truncate align-bottom font-mono text-[11px] opacity-80"
                             title={workEntry.detail}
                           >
                             {workEntry.detail}
@@ -5009,7 +5022,7 @@ const MessagesTimeline = memo(function MessagesTimeline({
                       </Button>
                     )}
                   </div>
-                  <p className="text-right text-[10px] text-muted-foreground/30">
+                  <p className="text-right text-[10px] text-muted-foreground/60">
                     {formatTimestamp(row.message.createdAt)}
                   </p>
                 </div>
@@ -5049,9 +5062,9 @@ const MessagesTimeline = memo(function MessagesTimeline({
                   const allDirectoriesExpanded =
                     allDirectoriesExpandedByTurnId[turnSummary.turnId] ?? true;
                   return (
-                    <div className="mt-2 rounded-lg border border-border/80 bg-card/45 p-2.5">
+                    <div className="mt-2 rounded-lg border border-border bg-card/50 p-2.5">
                       <div className="mb-1.5 flex items-center justify-between gap-2">
-                        <p className="text-[10px] uppercase tracking-[0.12em] text-muted-foreground/65">
+                        <p className="text-[10px] uppercase tracking-[0.12em] text-muted-foreground/90">
                           <span>Changed files ({changedFileCountLabel})</span>
                           {hasNonZeroStat(summaryStat) && (
                             <>
@@ -5095,7 +5108,7 @@ const MessagesTimeline = memo(function MessagesTimeline({
                     </div>
                   );
                 })()}
-                <p className="mt-1.5 text-[10px] text-muted-foreground/30">
+                <p className="mt-1.5 text-[10px] text-muted-foreground/60">
                   {formatMessageMeta(
                     row.message.createdAt,
                     row.message.streaming
@@ -5120,12 +5133,12 @@ const MessagesTimeline = memo(function MessagesTimeline({
 
       {row.kind === "working" && (
         <div className="flex items-center gap-2 py-0.5 pl-1.5">
-          <span className="h-1.5 w-1.5 shrink-0 rounded-full bg-muted-foreground/30" />
+          <span className="h-1.5 w-1.5 shrink-0 rounded-full bg-muted-foreground/55" />
           <div className="flex items-center pt-1">
             <span className="inline-flex items-center gap-[3px]">
-              <span className="h-1 w-1 rounded-full bg-muted-foreground/30 animate-pulse" />
-              <span className="h-1 w-1 rounded-full bg-muted-foreground/30 animate-pulse [animation-delay:200ms]" />
-              <span className="h-1 w-1 rounded-full bg-muted-foreground/30 animate-pulse [animation-delay:400ms]" />
+              <span className="h-1 w-1 rounded-full bg-muted-foreground/55 animate-pulse" />
+              <span className="h-1 w-1 rounded-full bg-muted-foreground/55 animate-pulse [animation-delay:200ms]" />
+              <span className="h-1 w-1 rounded-full bg-muted-foreground/55 animate-pulse [animation-delay:400ms]" />
             </span>
           </div>
         </div>
@@ -5136,7 +5149,7 @@ const MessagesTimeline = memo(function MessagesTimeline({
   if (!hasMessages && !isWorking) {
     return (
       <div className="flex h-full items-center justify-center">
-        <p className="text-sm text-muted-foreground/30">
+        <p className="text-sm text-muted-foreground/50">
           Send a message to start the conversation.
         </p>
       </div>
