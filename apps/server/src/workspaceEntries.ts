@@ -8,6 +8,12 @@ import {
   ProjectSearchEntriesInput,
   ProjectSearchEntriesResult,
 } from "@t3tools/contracts";
+import {
+  type RankedSearchMatch,
+  insertRankedSearchMatch,
+  normalizeNamePathSearchQuery,
+  scoreNormalizedNamePathSearchTarget,
+} from "@t3tools/shared/search";
 
 const WORKSPACE_CACHE_TTL_MS = 15_000;
 const WORKSPACE_CACHE_MAX_KEYS = 4;
@@ -37,10 +43,7 @@ interface SearchableWorkspaceEntry extends ProjectEntry {
   normalizedName: string;
 }
 
-interface RankedWorkspaceEntry {
-  entry: SearchableWorkspaceEntry;
-  score: number;
-}
+type RankedWorkspaceEntry = RankedSearchMatch<SearchableWorkspaceEntry>;
 
 const workspaceIndexCache = new Map<string, WorkspaceIndex>();
 const inFlightWorkspaceIndexBuilds = new Map<string, Promise<WorkspaceIndex>>();
@@ -74,127 +77,18 @@ function toSearchableWorkspaceEntry(entry: ProjectEntry): SearchableWorkspaceEnt
   };
 }
 
-function normalizeQuery(input: string): string {
-  return input
-    .trim()
-    .replace(/^[@./]+/, "")
-    .toLowerCase();
-}
-
-function scoreSubsequenceMatch(value: string, query: string): number | null {
-  if (!query) return 0;
-
-  let queryIndex = 0;
-  let firstMatchIndex = -1;
-  let previousMatchIndex = -1;
-  let gapPenalty = 0;
-
-  for (let valueIndex = 0; valueIndex < value.length; valueIndex += 1) {
-    if (value[valueIndex] !== query[queryIndex]) {
-      continue;
-    }
-
-    if (firstMatchIndex === -1) {
-      firstMatchIndex = valueIndex;
-    }
-    if (previousMatchIndex !== -1) {
-      gapPenalty += valueIndex - previousMatchIndex - 1;
-    }
-
-    previousMatchIndex = valueIndex;
-    queryIndex += 1;
-    if (queryIndex === query.length) {
-      const spanPenalty = valueIndex - firstMatchIndex + 1 - query.length;
-      const lengthPenalty = Math.min(64, value.length - query.length);
-      return firstMatchIndex * 2 + gapPenalty * 3 + spanPenalty + lengthPenalty;
-    }
-  }
-
-  return null;
-}
-
 function scoreEntry(entry: SearchableWorkspaceEntry, query: string): number | null {
   if (!query) {
     return entry.kind === "directory" ? 0 : 1;
   }
 
-  const { normalizedPath, normalizedName } = entry;
-
-  if (normalizedName === query) return 0;
-  if (normalizedPath === query) return 1;
-  if (normalizedName.startsWith(query)) return 2;
-  if (normalizedPath.startsWith(query)) return 3;
-  if (normalizedPath.includes(`/${query}`)) return 4;
-  if (normalizedName.includes(query)) return 5;
-  if (normalizedPath.includes(query)) return 6;
-
-  const nameFuzzyScore = scoreSubsequenceMatch(normalizedName, query);
-  if (nameFuzzyScore !== null) {
-    return 100 + nameFuzzyScore;
-  }
-
-  const pathFuzzyScore = scoreSubsequenceMatch(normalizedPath, query);
-  if (pathFuzzyScore !== null) {
-    return 200 + pathFuzzyScore;
-  }
-
-  return null;
-}
-
-function compareRankedWorkspaceEntries(
-  left: RankedWorkspaceEntry,
-  right: RankedWorkspaceEntry,
-): number {
-  const scoreDelta = left.score - right.score;
-  if (scoreDelta !== 0) return scoreDelta;
-  return left.entry.path.localeCompare(right.entry.path);
-}
-
-function findInsertionIndex(
-  rankedEntries: RankedWorkspaceEntry[],
-  candidate: RankedWorkspaceEntry,
-): number {
-  let low = 0;
-  let high = rankedEntries.length;
-
-  while (low < high) {
-    const middle = low + Math.floor((high - low) / 2);
-    const current = rankedEntries[middle];
-    if (!current) {
-      break;
-    }
-
-    if (compareRankedWorkspaceEntries(candidate, current) < 0) {
-      high = middle;
-    } else {
-      low = middle + 1;
-    }
-  }
-
-  return low;
-}
-
-function insertRankedEntry(
-  rankedEntries: RankedWorkspaceEntry[],
-  candidate: RankedWorkspaceEntry,
-  limit: number,
-): void {
-  if (limit <= 0) {
-    return;
-  }
-
-  const insertionIndex = findInsertionIndex(rankedEntries, candidate);
-  if (rankedEntries.length < limit) {
-    rankedEntries.splice(insertionIndex, 0, candidate);
-    return;
-  }
-
-  if (insertionIndex >= limit) {
-    return;
-  }
-
-  rankedEntries.splice(insertionIndex, 0, candidate);
-  rankedEntries.pop();
+  return scoreNormalizedNamePathSearchTarget(
+    {
+      normalizedName: entry.normalizedName,
+      normalizedPath: entry.normalizedPath,
+    },
+    query,
+  );
 }
 
 function isPathInIgnoredDirectory(relativePath: string): boolean {
@@ -538,7 +432,7 @@ export async function searchWorkspaceEntries(
   input: ProjectSearchEntriesInput,
 ): Promise<ProjectSearchEntriesResult> {
   const index = await getWorkspaceIndex(input.cwd);
-  const normalizedQuery = normalizeQuery(input.query);
+  const normalizedQuery = normalizeNamePathSearchQuery(input.query);
   const limit = Math.max(0, Math.floor(input.limit));
   const rankedEntries: RankedWorkspaceEntry[] = [];
   let matchedEntryCount = 0;
@@ -550,11 +444,13 @@ export async function searchWorkspaceEntries(
     }
 
     matchedEntryCount += 1;
-    insertRankedEntry(rankedEntries, { entry, score }, limit);
+    insertRankedSearchMatch(rankedEntries, { item: entry, score }, limit, (left, right) =>
+      left.path.localeCompare(right.path),
+    );
   }
 
   return {
-    entries: rankedEntries.map((candidate) => candidate.entry),
+    entries: rankedEntries.map((candidate) => candidate.item),
     truncated: index.truncated || matchedEntryCount > limit,
   };
 }
