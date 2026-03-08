@@ -23,6 +23,7 @@ import {
   ProviderInteractionMode,
 } from "@t3tools/contracts";
 import {
+  cycleReasoningEffort,
   getDefaultModel,
   getDefaultReasoningEffort,
   getReasoningEffortOptions,
@@ -271,6 +272,12 @@ const COMPOSER_PATH_QUERY_DEBOUNCE_MS = 120;
 const SCRIPT_TERMINAL_COLS = 120;
 const SCRIPT_TERMINAL_ROWS = 30;
 const WORKTREE_BRANCH_PREFIX = "t3code";
+const CODEX_REASONING_LABEL_BY_OPTION = {
+  low: "Low",
+  medium: "Medium",
+  high: "High",
+  xhigh: "Extra High",
+} satisfies Record<CodexReasoningEffort, string>;
 
 function readLastInvokedScriptByProjectFromStorage(): Record<string, string> {
   const stored = localStorage.getItem(LAST_INVOKED_SCRIPT_BY_PROJECT_KEY);
@@ -1364,6 +1371,25 @@ export default function ChatView({ threadId }: ChatViewProps) {
       focusComposer();
     });
   }, [focusComposer]);
+  const onReasoningEffortCycle = useCallback(() => {
+    if (selectedProvider !== "codex") {
+      return;
+    }
+
+    const nextEffort = cycleReasoningEffort(selectedEffort, selectedProvider);
+    if (!nextEffort) {
+      return;
+    }
+
+    setComposerDraftEffort(threadId, nextEffort);
+    scheduleComposerFocus();
+  }, [
+    scheduleComposerFocus,
+    selectedEffort,
+    selectedProvider,
+    setComposerDraftEffort,
+    threadId,
+  ]);
   const setTerminalOpen = useCallback(
     (open: boolean) => {
       if (!activeThreadId) return;
@@ -2244,6 +2270,13 @@ export default function ChatView({ threadId }: ChatViewProps) {
         return;
       }
 
+      if (command === "reasoningEffort.cycle") {
+        event.preventDefault();
+        event.stopPropagation();
+        onReasoningEffortCycle();
+        return;
+      }
+
       const scriptId = projectScriptIdFromCommand(command);
       if (!scriptId || !activeProject) return;
       const script = activeProject.scripts.find((entry) => entry.id === scriptId);
@@ -2266,6 +2299,7 @@ export default function ChatView({ threadId }: ChatViewProps) {
     splitTerminal,
     keybindings,
     onToggleDiff,
+    onReasoningEffortCycle,
     toggleFocusMode,
     toggleTerminalVisibility,
   ]);
@@ -3711,7 +3745,7 @@ export default function ChatView({ threadId }: ChatViewProps) {
                     <Button
                       variant="ghost"
                       className={cn(
-                        "shrink-0 whitespace-nowrap px-2 sm:w-[4.75rem] sm:justify-center sm:px-3",
+                        "shrink-0 whitespace-nowrap px-2 sm:justify-center sm:px-3",
                         isPlanMode
                           ? "text-orange-500 hover:text-orange-600 dark:text-orange-300/90 dark:hover:text-orange-200"
                           : "text-muted-foreground/70 hover:text-foreground/80",
@@ -3726,33 +3760,7 @@ export default function ChatView({ threadId }: ChatViewProps) {
                       }
                     >
                       <BotIcon />
-                      <span className="sr-only sm:not-sr-only">
-                        {interactionMode === "plan" ? "Plan" : "Chat"}
-                      </span>
-                    </Button>
-
-                    <Separator orientation="vertical" className="mx-0.5 hidden h-4 sm:block" />
-
-                    <Button
-                      variant="ghost"
-                      className="shrink-0 whitespace-nowrap px-2 text-muted-foreground/70 hover:text-foreground/80 sm:px-3"
-                      size="sm"
-                      type="button"
-                      onClick={() =>
-                        void handleRuntimeModeChange(
-                          runtimeMode === "full-access" ? "approval-required" : "full-access",
-                        )
-                      }
-                      title={
-                        runtimeMode === "full-access"
-                          ? "Full access — click to require approvals"
-                          : "Approval required — click for full access"
-                      }
-                    >
-                      {runtimeMode === "full-access" ? <LockOpenIcon /> : <LockIcon />}
-                      <span className="sr-only sm:not-sr-only">
-                        {runtimeMode === "full-access" ? "Full access" : "Supervised"}
-                      </span>
+                      <span>Plan</span>
                     </Button>
                   </div>
                 )}
@@ -3762,6 +3770,27 @@ export default function ChatView({ threadId }: ChatViewProps) {
                   {pendingUserInputs.length === 0 ? (
                     <ComposerSpeechToTextControl speech={speech} />
                   ) : null}
+                  <Button
+                    variant="ghost"
+                    className="shrink-0 whitespace-nowrap px-2 text-muted-foreground/70 hover:text-foreground/80 sm:px-3"
+                    size="sm"
+                    type="button"
+                    onClick={() =>
+                      void handleRuntimeModeChange(
+                        runtimeMode === "full-access" ? "approval-required" : "full-access",
+                      )
+                    }
+                    title={
+                      runtimeMode === "full-access"
+                        ? "Full access — click to require approvals"
+                        : "Approval required — click for full access"
+                    }
+                  >
+                    {runtimeMode === "full-access" ? <LockOpenIcon /> : <LockIcon />}
+                    <span className="sr-only sm:not-sr-only">
+                      {runtimeMode === "full-access" ? "Full access" : "Supervised"}
+                    </span>
+                  </Button>
                   {isPreparingWorktree ? (
                     <span className="text-muted-foreground/70 text-xs">Preparing worktree...</span>
                   ) : null}
@@ -5627,14 +5656,8 @@ const CodexTraitsPicker = memo(function CodexTraitsPicker(props: {
 }) {
   const [isMenuOpen, setIsMenuOpen] = useState(false);
   const defaultReasoningEffort = getDefaultReasoningEffort("codex");
-  const reasoningLabelByOption: Record<CodexReasoningEffort, string> = {
-    low: "Low",
-    medium: "Medium",
-    high: "High",
-    xhigh: "Extra High",
-  };
   const triggerLabel = [
-    reasoningLabelByOption[props.effort],
+    CODEX_REASONING_LABEL_BY_OPTION[props.effort],
     ...(props.fastModeEnabled ? ["Fast"] : []),
   ]
     .filter(Boolean)
@@ -5652,12 +5675,15 @@ const CodexTraitsPicker = memo(function CodexTraitsPicker(props: {
           <Button
             size="sm"
             variant="ghost"
-            className="shrink-0 whitespace-nowrap px-2 text-muted-foreground/70 hover:text-foreground/80 sm:px-3"
+            aria-label="Reasoning and speed options"
+            className="shrink-0 justify-start whitespace-nowrap px-2 text-left text-muted-foreground/70 hover:text-foreground/80 sm:px-3"
           />
         }
       >
-        <span>{triggerLabel}</span>
-        <ChevronDownIcon aria-hidden="true" className="size-3 opacity-60" />
+        <span className="flex items-center gap-1.5">
+          <span>{triggerLabel}</span>
+          <ChevronDownIcon aria-hidden="true" className="size-3 opacity-60" />
+        </span>
       </MenuTrigger>
       <MenuPopup align="start">
         <MenuGroup>
@@ -5673,7 +5699,7 @@ const CodexTraitsPicker = memo(function CodexTraitsPicker(props: {
           >
             {props.options.map((effort) => (
               <MenuRadioItem key={effort} value={effort}>
-                {reasoningLabelByOption[effort]}
+                {CODEX_REASONING_LABEL_BY_OPTION[effort]}
                 {effort === defaultReasoningEffort ? " (default)" : ""}
               </MenuRadioItem>
             ))}

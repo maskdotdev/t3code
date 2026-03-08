@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import { DEFAULT_MODEL_BY_PROVIDER, MODEL_OPTIONS_BY_PROVIDER } from "@t3tools/contracts";
 
 import {
+  cycleReasoningEffort,
   getDefaultModel,
   getDefaultReasoningEffort,
   getModelOptions,
@@ -65,5 +66,19 @@ describe("getReasoningEffortOptions", () => {
 describe("getDefaultReasoningEffort", () => {
   it("returns provider-scoped defaults", () => {
     expect(getDefaultReasoningEffort("codex")).toBe("high");
+  });
+});
+
+describe("cycleReasoningEffort", () => {
+  it("cycles through codex reasoning efforts in configured order", () => {
+    expect(cycleReasoningEffort("xhigh", "codex")).toBe("high");
+    expect(cycleReasoningEffort("high", "codex")).toBe("medium");
+    expect(cycleReasoningEffort("medium", "codex")).toBe("low");
+    expect(cycleReasoningEffort("low", "codex")).toBe("xhigh");
+  });
+
+  it("falls back to the provider default when the current value is missing", () => {
+    expect(cycleReasoningEffort(null, "codex")).toBe("medium");
+    expect(cycleReasoningEffort(undefined, "codex")).toBe("medium");
   });
 });

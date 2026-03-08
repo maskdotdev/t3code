@@ -14,6 +14,7 @@ const STATIC_KEYBINDING_COMMANDS = [
   "terminal.close",
   "diff.toggle",
   "focus.toggle",
+  "reasoningEffort.cycle",
   "chat.new",
   "chat.newLocal",
   "editor.openFavorite",
