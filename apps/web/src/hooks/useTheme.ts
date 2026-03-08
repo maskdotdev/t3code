@@ -1,105 +1,98 @@
 import { useCallback, useEffect, useSyncExternalStore } from "react";
 
-type Theme = "light" | "dark" | "system";
-type ThemeSnapshot = {
-  theme: Theme;
-  systemDark: boolean;
+import {
+  getAppSettingsSnapshot,
+  subscribeToAppSettings,
+  updateAppSettingsSnapshot,
+} from "../appSettings";
+import {
+  applyThemeToDocument,
+  createThemeSnapshot,
+  DEFAULT_APP_THEME_MODE,
+  DEFAULT_APP_THEME_NAME,
+  getSystemDark,
+  subscribeToSystemTheme,
+  type AppThemeMode,
+  type AppThemeName,
+} from "../theme";
+
+type ThemeSettingsSnapshot = {
+  appearanceMode: AppThemeMode;
+  appearanceTheme: AppThemeName;
 };
 
-const STORAGE_KEY = "t3code:theme";
-const MEDIA_QUERY = "(prefers-color-scheme: dark)";
+let lastThemeSettingsSnapshot: ThemeSettingsSnapshot | null = null;
 
-let listeners: Array<() => void> = [];
-let lastSnapshot: ThemeSnapshot | null = null;
-function emitChange() {
-  for (const listener of listeners) listener();
-}
+function getThemeSettingsSnapshot(): ThemeSettingsSnapshot {
+  const settings = getAppSettingsSnapshot();
+  const nextSnapshot = {
+    appearanceMode: settings.appearanceMode,
+    appearanceTheme: settings.appearanceTheme,
+  };
 
-function getSystemDark(): boolean {
-  return window.matchMedia(MEDIA_QUERY).matches;
-}
-
-function getStored(): Theme {
-  const raw = localStorage.getItem(STORAGE_KEY);
-  if (raw === "light" || raw === "dark" || raw === "system") return raw;
-  return "system";
-}
-
-function applyTheme(theme: Theme, suppressTransitions = false) {
-  if (suppressTransitions) {
-    document.documentElement.classList.add("no-transitions");
-  }
-  const isDark = theme === "dark" || (theme === "system" && getSystemDark());
-  document.documentElement.classList.toggle("dark", isDark);
-  if (suppressTransitions) {
-    // Force a reflow so the no-transitions class takes effect before removal
-    // oxlint-disable-next-line no-unused-expressions
-    document.documentElement.offsetHeight;
-    requestAnimationFrame(() => {
-      document.documentElement.classList.remove("no-transitions");
-    });
-  }
-}
-
-// Apply immediately on module load to prevent flash
-applyTheme(getStored());
-
-function getSnapshot(): ThemeSnapshot {
-  const theme = getStored();
-  const systemDark = theme === "system" ? getSystemDark() : false;
-
-  if (lastSnapshot && lastSnapshot.theme === theme && lastSnapshot.systemDark === systemDark) {
-    return lastSnapshot;
+  if (
+    lastThemeSettingsSnapshot &&
+    lastThemeSettingsSnapshot.appearanceMode === nextSnapshot.appearanceMode &&
+    lastThemeSettingsSnapshot.appearanceTheme === nextSnapshot.appearanceTheme
+  ) {
+    return lastThemeSettingsSnapshot;
   }
 
-  lastSnapshot = { theme, systemDark };
-  return lastSnapshot;
+  lastThemeSettingsSnapshot = nextSnapshot;
+  return nextSnapshot;
 }
 
-function subscribe(listener: () => void): () => void {
-  listeners.push(listener);
-
-  // Listen for system preference changes
-  const mq = window.matchMedia(MEDIA_QUERY);
-  const handleChange = () => {
-    if (getStored() === "system") applyTheme("system", true);
-    emitChange();
+function getServerThemeSettingsSnapshot(): ThemeSettingsSnapshot {
+  return {
+    appearanceMode: DEFAULT_APP_THEME_MODE,
+    appearanceTheme: DEFAULT_APP_THEME_NAME,
   };
-  mq.addEventListener("change", handleChange);
+}
 
-  // Listen for storage changes from other tabs
-  const handleStorage = (e: StorageEvent) => {
-    if (e.key === STORAGE_KEY) {
-      applyTheme(getStored(), true);
-      emitChange();
-    }
-  };
-  window.addEventListener("storage", handleStorage);
+function getSystemDarkSnapshot(): boolean {
+  return getSystemDark();
+}
 
-  return () => {
-    listeners = listeners.filter((l) => l !== listener);
-    mq.removeEventListener("change", handleChange);
-    window.removeEventListener("storage", handleStorage);
-  };
+function getServerSystemDarkSnapshot(): boolean {
+  return false;
 }
 
 export function useTheme() {
-  const snapshot = useSyncExternalStore(subscribe, getSnapshot);
-  const theme = snapshot.theme;
+  const themeSettings = useSyncExternalStore(
+    subscribeToAppSettings,
+    getThemeSettingsSnapshot,
+    getServerThemeSettingsSnapshot,
+  );
+  const systemDark = useSyncExternalStore(
+    subscribeToSystemTheme,
+    getSystemDarkSnapshot,
+    getServerSystemDarkSnapshot,
+  );
+  const snapshot = createThemeSnapshot(
+    {
+      appearanceMode: themeSettings.appearanceMode,
+      appearanceTheme: themeSettings.appearanceTheme,
+    },
+    systemDark,
+  );
 
-  const resolvedTheme: "light" | "dark" =
-    theme === "system" ? (snapshot.systemDark ? "dark" : "light") : theme;
+  useEffect(() => {
+    applyThemeToDocument(snapshot, true);
+  }, [snapshot.mode, snapshot.resolvedTheme, snapshot.themeName, snapshot.systemDark]);
 
-  const setTheme = useCallback((next: Theme) => {
-    localStorage.setItem(STORAGE_KEY, next);
-    applyTheme(next, true);
-    emitChange();
+  const setMode = useCallback((next: AppThemeMode) => {
+    updateAppSettingsSnapshot({ appearanceMode: next });
   }, []);
 
-  // Keep DOM in sync on mount/change
-  useEffect(() => {
-    applyTheme(theme);
-  }, [theme]);
+  const setThemeName = useCallback((next: AppThemeName) => {
+    updateAppSettingsSnapshot({ appearanceTheme: next });
+  }, []);
 
-  return { theme, setTheme, resolvedTheme } as const;
+  return {
+    mode: themeSettings.appearanceMode,
+    setMode,
+    themeName: themeSettings.appearanceTheme,
+    setThemeName,
+    resolvedTheme: snapshot.resolvedTheme,
+  } as const;
 }

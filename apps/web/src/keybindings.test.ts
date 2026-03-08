@@ -109,6 +109,11 @@ const DEFAULT_BINDINGS = compile([
     },
     command: "focus.toggle",
   },
+  {
+    shortcut: modShortcut("t"),
+    command: "reasoningEffort.cycle",
+    whenAst: whenNot(whenIdentifier("terminalFocus")),
+  },
   { shortcut: modShortcut("o", { shiftKey: true }), command: "chat.new" },
   { shortcut: modShortcut("n", { shiftKey: true }), command: "chat.newLocal" },
   { shortcut: modShortcut("o"), command: "editor.openFavorite" },
@@ -254,6 +259,10 @@ describe("shortcutLabelForCommand", () => {
       "⌃⇧F",
     );
     assert.strictEqual(
+      shortcutLabelForCommand(DEFAULT_BINDINGS, "reasoningEffort.cycle", "MacIntel"),
+      "⌘T",
+    );
+    assert.strictEqual(
       shortcutLabelForCommand(DEFAULT_BINDINGS, "editor.openFavorite", "Linux"),
       "Ctrl+O",
     );
@@ -324,6 +333,22 @@ describe("chat/editor shortcuts", () => {
     assert.isTrue(
       isFocusToggleShortcut(event({ key: "f", ctrlKey: true, shiftKey: true }), DEFAULT_BINDINGS, {
         platform: "MacIntel",
+      }),
+    );
+  });
+
+  it("matches reasoningEffort.cycle outside terminal focus", () => {
+    assert.strictEqual(
+      resolveShortcutCommand(event({ key: "t", metaKey: true }), DEFAULT_BINDINGS, {
+        platform: "MacIntel",
+        context: { terminalFocus: false },
+      }),
+      "reasoningEffort.cycle",
+    );
+    assert.isNull(
+      resolveShortcutCommand(event({ key: "t", metaKey: true }), DEFAULT_BINDINGS, {
+        platform: "MacIntel",
+        context: { terminalFocus: true },
       }),
     );
   });

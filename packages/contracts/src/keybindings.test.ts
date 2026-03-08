@@ -47,6 +47,12 @@ it.effect("parses keybinding rules", () =>
     });
     assert.strictEqual(parsedFocusToggle.command, "focus.toggle");
 
+    const parsedReasoningEffortCycle = yield* decode(KeybindingRule, {
+      key: "mod+t",
+      command: "reasoningEffort.cycle",
+    });
+    assert.strictEqual(parsedReasoningEffortCycle.command, "reasoningEffort.cycle");
+
     const parsedLocal = yield* decode(KeybindingRule, {
       key: "mod+shift+n",
       command: "chat.newLocal",

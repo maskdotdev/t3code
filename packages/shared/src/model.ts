@@ -75,4 +75,26 @@ export function getDefaultReasoningEffort(
   return provider === "codex" ? "high" : null;
 }
 
+export function cycleReasoningEffort(
+  current: CodexReasoningEffort | null | undefined,
+  provider: ProviderKind = "codex",
+): CodexReasoningEffort | null {
+  const options = getReasoningEffortOptions(provider);
+  if (options.length === 0) {
+    return null;
+  }
+
+  const resolvedCurrent =
+    current && options.includes(current)
+      ? current
+      : (getDefaultReasoningEffort(provider) ?? options[0] ?? null);
+  if (resolvedCurrent === null) {
+    return options[0] ?? null;
+  }
+
+  const currentIndex = options.indexOf(resolvedCurrent);
+  const nextIndex = currentIndex >= 0 ? (currentIndex + 1) % options.length : 0;
+  return options[nextIndex] ?? options[0] ?? null;
+}
+
 export { CODEX_REASONING_EFFORT_OPTIONS };

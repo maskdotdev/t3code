@@ -2,6 +2,17 @@ import { useCallback, useSyncExternalStore } from "react";
 import { Option, Schema } from "effect";
 import { type ProviderKind, type ProviderServiceTier } from "@t3tools/contracts";
 import { getDefaultModel, getModelOptions, normalizeModelSlug } from "@t3tools/shared/model";
+import {
+  APP_THEME_MODES,
+  APP_THEME_NAMES,
+  DEFAULT_APP_THEME_MODE,
+  DEFAULT_APP_THEME_NAME,
+  isAppThemeMode,
+  isAppThemeName,
+  LEGACY_THEME_STORAGE_KEY,
+  type AppThemeMode,
+  type AppThemeName,
+} from "./theme";
 
 const APP_SETTINGS_STORAGE_KEY = "t3code:app-settings:v1";
 const MAX_CUSTOM_MODEL_COUNT = 32;
@@ -25,6 +36,8 @@ export const APP_SERVICE_TIER_OPTIONS = [
 ] as const;
 export type AppServiceTier = (typeof APP_SERVICE_TIER_OPTIONS)[number]["value"];
 const AppServiceTierSchema = Schema.Literals(["auto", "fast", "flex"]);
+const AppThemeModeSchema = Schema.Literals(APP_THEME_MODES);
+const AppThemeNameSchema = Schema.Literals(APP_THEME_NAMES);
 const MODELS_WITH_FAST_SUPPORT = new Set(["gpt-5.4"]);
 const BUILT_IN_MODEL_SLUGS_BY_PROVIDER: Record<ProviderKind, ReadonlySet<string>> = {
   codex: new Set(getModelOptions("codex").map((option) => option.slug)),
@@ -42,6 +55,12 @@ const AppSettingsSchema = Schema.Struct({
     Schema.withConstructorDefault(() => Option.some(false)),
   ),
   focusMode: Schema.Boolean.pipe(Schema.withConstructorDefault(() => Option.some(false))),
+  appearanceMode: AppThemeModeSchema.pipe(
+    Schema.withConstructorDefault(() => Option.some(DEFAULT_APP_THEME_MODE)),
+  ),
+  appearanceTheme: AppThemeNameSchema.pipe(
+    Schema.withConstructorDefault(() => Option.some(DEFAULT_APP_THEME_NAME)),
+  ),
   codexServiceTier: AppServiceTierSchema.pipe(Schema.withConstructorDefault(() => Option.some("auto"))),
   customCodexModels: Schema.Array(Schema.String).pipe(
     Schema.withConstructorDefault(() => Option.some([])),
@@ -206,13 +225,40 @@ function emitChange(): void {
   }
 }
 
+function getLegacyThemeMode(): AppThemeMode {
+  if (typeof window === "undefined") {
+    return DEFAULT_APP_THEME_MODE;
+  }
+
+  const raw = window.localStorage.getItem(LEGACY_THEME_STORAGE_KEY);
+  return isAppThemeMode(raw) ? raw : DEFAULT_APP_THEME_MODE;
+}
+
 function parsePersistedSettings(value: string | null): AppSettings {
   if (!value) {
-    return DEFAULT_APP_SETTINGS;
+    return {
+      ...DEFAULT_APP_SETTINGS,
+      appearanceMode: getLegacyThemeMode(),
+    };
   }
 
   try {
-    return normalizeAppSettings(Schema.decodeSync(Schema.fromJsonString(AppSettingsSchema))(value));
+    const parsed = JSON.parse(value);
+    if (!parsed || typeof parsed !== "object") {
+      return DEFAULT_APP_SETTINGS;
+    }
+
+    const legacyAware = {
+      ...parsed,
+      appearanceMode: isAppThemeMode(parsed.appearanceMode)
+        ? parsed.appearanceMode
+        : getLegacyThemeMode(),
+      appearanceTheme: isAppThemeName(parsed.appearanceTheme)
+        ? parsed.appearanceTheme
+        : DEFAULT_APP_THEME_NAME,
+    };
+
+    return normalizeAppSettings(Schema.decodeSync(AppSettingsSchema)(legacyAware));
   } catch {
     return DEFAULT_APP_SETTINGS;
   }
@@ -249,7 +295,7 @@ function persistSettings(next: AppSettings): void {
   cachedSnapshot = next;
 }
 
-function subscribe(listener: () => void): () => void {
+export function subscribeToAppSettings(listener: () => void): () => void {
   listeners.push(listener);
 
   const onStorage = (event: StorageEvent) => {
@@ -265,27 +311,35 @@ function subscribe(listener: () => void): () => void {
   };
 }
 
+export function updateAppSettingsSnapshot(patch: Partial<AppSettings>): void {
+  const next = normalizeAppSettings(
+    Schema.decodeSync(AppSettingsSchema)({
+      ...getAppSettingsSnapshot(),
+      ...patch,
+    }),
+  );
+  persistSettings(next);
+  emitChange();
+}
+
+export function resetAppSettingsSnapshot(): void {
+  persistSettings(DEFAULT_APP_SETTINGS);
+  emitChange();
+}
+
 export function useAppSettings() {
   const settings = useSyncExternalStore(
-    subscribe,
+    subscribeToAppSettings,
     getAppSettingsSnapshot,
     () => DEFAULT_APP_SETTINGS,
   );
 
   const updateSettings = useCallback((patch: Partial<AppSettings>) => {
-    const next = normalizeAppSettings(
-      Schema.decodeSync(AppSettingsSchema)({
-        ...getAppSettingsSnapshot(),
-        ...patch,
-      }),
-    );
-    persistSettings(next);
-    emitChange();
+    updateAppSettingsSnapshot(patch);
   }, []);
 
   const resetSettings = useCallback(() => {
-    persistSettings(DEFAULT_APP_SETTINGS);
-    emitChange();
+    resetAppSettingsSnapshot();
   }, []);
 
   return {
