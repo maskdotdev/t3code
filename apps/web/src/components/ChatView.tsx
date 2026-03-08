@@ -137,6 +137,8 @@ import {
   FolderClosedIcon,
   LockIcon,
   LockOpenIcon,
+  Maximize2Icon,
+  Minimize2Icon,
   Undo2Icon,
   XIcon,
   CopyIcon,
@@ -219,6 +221,9 @@ import { selectThreadTerminalState, useTerminalStateStore } from "../terminalSta
 import { clamp } from "effect/Number";
 import { ComposerPromptEditor, type ComposerPromptEditorHandle } from "./ComposerPromptEditor";
 import { estimateTimelineMessageHeight } from "./timelineHeight";
+import { ComposerSpeechToTextControl } from "./ComposerSpeechToTextControl";
+import { ComposerSpeechToTextStatus } from "./ComposerSpeechToTextStatus";
+import { useSpeechToText } from "../hooks/useSpeechToText";
 
 function formatMessageMeta(createdAt: string, duration: string | null): string {
   if (!duration) return formatTimestamp(createdAt);
@@ -597,7 +602,7 @@ export default function ChatView({ threadId }: ChatViewProps) {
   const syncServerReadModel = useStore((store) => store.syncServerReadModel);
   const setStoreThreadError = useStore((store) => store.setError);
   const setStoreThreadBranch = useStore((store) => store.setThreadBranch);
-  const { settings } = useAppSettings();
+  const { settings, updateSettings } = useAppSettings();
   const navigate = useNavigate();
   const rawSearch = useSearch({
     strict: false,
@@ -757,6 +762,10 @@ export default function ChatView({ threadId }: ChatViewProps) {
   const interactionMode =
     composerDraft.interactionMode ?? activeThread?.interactionMode ?? DEFAULT_INTERACTION_MODE;
   const isPlanMode = interactionMode === "plan";
+  const focusMode = settings.focusMode;
+  const toggleFocusMode = useCallback(() => {
+    updateSettings({ focusMode: !focusMode });
+  }, [focusMode, updateSettings]);
   const isServerThread = serverThread !== undefined;
   const isLocalDraftThread = !isServerThread && localDraftThread !== undefined;
   const diffSearch = useMemo(
@@ -2228,6 +2237,13 @@ export default function ChatView({ threadId }: ChatViewProps) {
         return;
       }
 
+      if (command === "focus.toggle") {
+        event.preventDefault();
+        event.stopPropagation();
+        toggleFocusMode();
+        return;
+      }
+
       const scriptId = projectScriptIdFromCommand(command);
       if (!scriptId || !activeProject) return;
       const script = activeProject.scripts.find((entry) => entry.id === scriptId);
@@ -2250,6 +2266,7 @@ export default function ChatView({ threadId }: ChatViewProps) {
     splitTerminal,
     keybindings,
     onToggleDiff,
+    toggleFocusMode,
     toggleTerminalVisibility,
   ]);
 
@@ -3169,6 +3186,40 @@ export default function ChatView({ threadId }: ChatViewProps) {
     };
   }, [readComposerSnapshot]);
 
+  const insertSpeechTranscript = useCallback(
+    (transcript: string) => {
+      const normalizedTranscript = transcript.trim();
+      if (normalizedTranscript.length === 0) {
+        return;
+      }
+      const snapshot = readComposerSnapshot();
+      const before = snapshot.value.slice(0, snapshot.cursor);
+      const after = snapshot.value.slice(snapshot.cursor);
+      const needsLeadingSpace =
+        before.length > 0 && !/\s$/.test(before) && !/^\s/.test(normalizedTranscript);
+      const needsTrailingSpace =
+        after.length > 0 && !/^\s/.test(after) && !/\s$/.test(normalizedTranscript);
+      const inserted = `${needsLeadingSpace ? " " : ""}${normalizedTranscript}${needsTrailingSpace ? " " : ""}`;
+      const next = replaceTextRange(snapshot.value, snapshot.cursor, snapshot.cursor, inserted);
+      promptRef.current = next.text;
+      setPrompt(next.text);
+      setComposerCursor(next.cursor);
+      setComposerTrigger(
+        detectComposerTrigger(next.text, expandCollapsedComposerCursor(next.text, next.cursor)),
+      );
+      window.requestAnimationFrame(() => {
+        composerEditorRef.current?.focusAt(next.cursor);
+      });
+    },
+    [readComposerSnapshot, setPrompt],
+  );
+  const speech = useSpeechToText({
+    disabled: isSendBusy || isConnecting || phase === "running",
+    onInsertTranscript: insertSpeechTranscript,
+  });
+  const isSpeechBusy =
+    speech.state.phase === "recording" || speech.state.phase === "stopping";
+
   const onSelectComposerItem = useCallback(
     (item: ComposerCommandItem) => {
       if (composerSelectLockRef.current) return;
@@ -3360,7 +3411,7 @@ export default function ChatView({ threadId }: ChatViewProps) {
         {!isElectron && (
           <header className="border-b border-border px-3 py-2 md:hidden">
             <div className="flex items-center gap-2">
-              <SidebarTrigger className="size-7 shrink-0" />
+              {!focusMode ? <SidebarTrigger className="size-7 shrink-0" /> : null}
               <span className="text-sm font-medium text-foreground">Threads</span>
             </div>
           </header>
@@ -3392,6 +3443,7 @@ export default function ChatView({ threadId }: ChatViewProps) {
           activeThreadId={activeThread.id}
           activeThreadTitle={activeThread.title}
           activeProjectName={activeProject?.name}
+          focusMode={focusMode}
           isGitRepo={isGitRepo}
           openInCwd={activeThread.worktreePath ?? activeProject?.cwd ?? null}
           activeProjectScripts={activeProject?.scripts}
@@ -3409,6 +3461,9 @@ export default function ChatView({ threadId }: ChatViewProps) {
           onAddProjectScript={saveProjectScript}
           onUpdateProjectScript={updateProjectScript}
           onToggleDiff={onToggleDiff}
+          onFocusModeChange={(nextFocusMode) => {
+            updateSettings({ focusMode: nextFocusMode });
+          }}
         />
       </header>
 
@@ -3624,86 +3679,89 @@ export default function ChatView({ threadId }: ChatViewProps) {
               </div>
             ) : (
               <div className="flex flex-wrap items-center justify-between gap-2 px-2.5 pb-2.5 sm:flex-nowrap sm:gap-0 sm:px-3 sm:pb-3">
-                <div className="flex min-w-0 flex-1 items-center gap-1 overflow-x-auto [scrollbar-width:none] [&::-webkit-scrollbar]:hidden sm:min-w-max sm:overflow-visible">
-                  {/* Provider/model picker */}
-                  <ProviderModelPicker
-                    provider={selectedProvider}
-                    model={selectedModelForPickerWithCustomFallback}
-                    lockedProvider={lockedProvider}
-                    modelOptionsByProvider={modelOptionsByProvider}
-                    serviceTierSetting={selectedServiceTierSetting}
-                    onProviderModelChange={onProviderModelSelect}
-                  />
+                {pendingUserInputs.length === 0 && speech.state.phase !== "idle" ? (
+                  <ComposerSpeechToTextStatus speech={speech} />
+                ) : (
+                  <div className="flex min-w-0 flex-1 items-center gap-1 overflow-x-auto [scrollbar-width:none] [&::-webkit-scrollbar]:hidden sm:min-w-max sm:overflow-visible">
+                    {/* Provider/model picker */}
+                    <ProviderModelPicker
+                      provider={selectedProvider}
+                      model={selectedModelForPickerWithCustomFallback}
+                      lockedProvider={lockedProvider}
+                      modelOptionsByProvider={modelOptionsByProvider}
+                      serviceTierSetting={selectedServiceTierSetting}
+                      onProviderModelChange={onProviderModelSelect}
+                    />
 
-                  {selectedProvider === "codex" && selectedEffort != null ? (
-                    <>
-                      <Separator orientation="vertical" className="mx-0.5 hidden h-4 sm:block" />
-                      <CodexTraitsPicker
-                        effort={selectedEffort}
-                        fastModeEnabled={selectedCodexFastModeEnabled}
-                        options={reasoningOptions}
-                        onEffortChange={onEffortSelect}
-                        onFastModeChange={onCodexFastModeChange}
-                      />
-                    </>
-                  ) : null}
+                    {selectedProvider === "codex" && selectedEffort != null ? (
+                      <>
+                        <Separator orientation="vertical" className="mx-0.5 hidden h-4 sm:block" />
+                        <CodexTraitsPicker
+                          effort={selectedEffort}
+                          fastModeEnabled={selectedCodexFastModeEnabled}
+                          options={reasoningOptions}
+                          onEffortChange={onEffortSelect}
+                          onFastModeChange={onCodexFastModeChange}
+                        />
+                      </>
+                    ) : null}
 
-                  {/* Divider */}
-                  <Separator orientation="vertical" className="mx-0.5 hidden h-4 sm:block" />
+                    <Separator orientation="vertical" className="mx-0.5 hidden h-4 sm:block" />
 
-                  {/* Interaction mode toggle */}
-                  <Button
-                    variant="ghost"
-                    className={cn(
-                      "shrink-0 whitespace-nowrap px-2 sm:w-[4.75rem] sm:justify-center sm:px-3",
-                      isPlanMode
-                        ? "text-orange-500 hover:text-orange-600 dark:text-orange-300/90 dark:hover:text-orange-200"
-                        : "text-muted-foreground/70 hover:text-foreground/80",
-                    )}
-                    size="sm"
-                    type="button"
-                    onClick={toggleInteractionMode}
-                    title={
-                      interactionMode === "plan"
-                        ? "Plan mode — click to return to normal chat mode"
-                        : "Default mode — click to enter plan mode"
-                    }
-                  >
-                    <BotIcon />
-                    <span className="sr-only sm:not-sr-only">
-                      {interactionMode === "plan" ? "Plan" : "Chat"}
-                    </span>
-                  </Button>
+                    <Button
+                      variant="ghost"
+                      className={cn(
+                        "shrink-0 whitespace-nowrap px-2 sm:w-[4.75rem] sm:justify-center sm:px-3",
+                        isPlanMode
+                          ? "text-orange-500 hover:text-orange-600 dark:text-orange-300/90 dark:hover:text-orange-200"
+                          : "text-muted-foreground/70 hover:text-foreground/80",
+                      )}
+                      size="sm"
+                      type="button"
+                      onClick={toggleInteractionMode}
+                      title={
+                        interactionMode === "plan"
+                          ? "Plan mode — click to return to normal chat mode"
+                          : "Default mode — click to enter plan mode"
+                      }
+                    >
+                      <BotIcon />
+                      <span className="sr-only sm:not-sr-only">
+                        {interactionMode === "plan" ? "Plan" : "Chat"}
+                      </span>
+                    </Button>
 
-                  {/* Divider */}
-                  <Separator orientation="vertical" className="mx-0.5 hidden h-4 sm:block" />
+                    <Separator orientation="vertical" className="mx-0.5 hidden h-4 sm:block" />
 
-                  {/* Runtime mode toggle */}
-                  <Button
-                    variant="ghost"
-                    className="shrink-0 whitespace-nowrap px-2 text-muted-foreground/70 hover:text-foreground/80 sm:px-3"
-                    size="sm"
-                    type="button"
-                    onClick={() =>
-                      void handleRuntimeModeChange(
-                        runtimeMode === "full-access" ? "approval-required" : "full-access",
-                      )
-                    }
-                    title={
-                      runtimeMode === "full-access"
-                        ? "Full access — click to require approvals"
-                        : "Approval required — click for full access"
-                    }
-                  >
-                    {runtimeMode === "full-access" ? <LockOpenIcon /> : <LockIcon />}
-                    <span className="sr-only sm:not-sr-only">
-                      {runtimeMode === "full-access" ? "Full access" : "Supervised"}
-                    </span>
-                  </Button>
-                </div>
+                    <Button
+                      variant="ghost"
+                      className="shrink-0 whitespace-nowrap px-2 text-muted-foreground/70 hover:text-foreground/80 sm:px-3"
+                      size="sm"
+                      type="button"
+                      onClick={() =>
+                        void handleRuntimeModeChange(
+                          runtimeMode === "full-access" ? "approval-required" : "full-access",
+                        )
+                      }
+                      title={
+                        runtimeMode === "full-access"
+                          ? "Full access — click to require approvals"
+                          : "Approval required — click for full access"
+                      }
+                    >
+                      {runtimeMode === "full-access" ? <LockOpenIcon /> : <LockIcon />}
+                      <span className="sr-only sm:not-sr-only">
+                        {runtimeMode === "full-access" ? "Full access" : "Supervised"}
+                      </span>
+                    </Button>
+                  </div>
+                )}
 
                 {/* Right side: send / stop button */}
                 <div className="flex shrink-0 items-center gap-2">
+                  {pendingUserInputs.length === 0 ? (
+                    <ComposerSpeechToTextControl speech={speech} />
+                  ) : null}
                   {isPreparingWorktree ? (
                     <span className="text-muted-foreground/70 text-xs">Preparing worktree...</span>
                   ) : null}
@@ -3762,7 +3820,7 @@ export default function ChatView({ threadId }: ChatViewProps) {
                           type="submit"
                           size="sm"
                           className="h-9 rounded-full px-4 sm:h-8"
-                          disabled={isSendBusy || isConnecting}
+                          disabled={isSendBusy || isConnecting || isSpeechBusy}
                         >
                           {isConnecting || isSendBusy ? "Sending..." : "Refine"}
                         </Button>
@@ -3772,7 +3830,7 @@ export default function ChatView({ threadId }: ChatViewProps) {
                             type="submit"
                             size="sm"
                             className="h-9 rounded-l-full rounded-r-none px-4 sm:h-8"
-                            disabled={isSendBusy || isConnecting}
+                            disabled={isSendBusy || isConnecting || isSpeechBusy}
                           >
                             {isConnecting || isSendBusy ? "Sending..." : "Implement"}
                           </Button>
@@ -3784,7 +3842,7 @@ export default function ChatView({ threadId }: ChatViewProps) {
                                   variant="default"
                                   className="h-9 rounded-l-none rounded-r-full border-l-white/12 px-2 sm:h-8"
                                   aria-label="Implementation actions"
-                                  disabled={isSendBusy || isConnecting}
+                                  disabled={isSendBusy || isConnecting || isSpeechBusy}
                                 />
                               }
                             >
@@ -3792,7 +3850,7 @@ export default function ChatView({ threadId }: ChatViewProps) {
                             </MenuTrigger>
                             <MenuPopup align="end" side="top">
                               <MenuItem
-                                disabled={isSendBusy || isConnecting}
+                                disabled={isSendBusy || isConnecting || isSpeechBusy}
                                 onClick={() => void onImplementPlanInNewThread()}
                               >
                                 Implement in new thread
@@ -3808,6 +3866,7 @@ export default function ChatView({ threadId }: ChatViewProps) {
                         disabled={
                           isSendBusy ||
                           isConnecting ||
+                          isSpeechBusy ||
                           (!prompt.trim() && composerImages.length === 0)
                         }
                         aria-label={
@@ -3866,7 +3925,7 @@ export default function ChatView({ threadId }: ChatViewProps) {
         </form>
       </div>
 
-      {isGitRepo && (
+      {!focusMode && isGitRepo && (
         <BranchToolbar
           threadId={activeThread.id}
           onEnvModeChange={onEnvModeChange}
@@ -3876,7 +3935,7 @@ export default function ChatView({ threadId }: ChatViewProps) {
       )}
 
       {(() => {
-        if (!terminalState.terminalOpen || !activeProject) {
+        if (focusMode || !terminalState.terminalOpen || !activeProject) {
           return null;
         }
         return (
@@ -3978,6 +4037,7 @@ interface ChatHeaderProps {
   activeThreadId: ThreadId;
   activeThreadTitle: string;
   activeProjectName: string | undefined;
+  focusMode: boolean;
   isGitRepo: boolean;
   openInCwd: string | null;
   activeProjectScripts: ProjectScript[] | undefined;
@@ -3991,12 +4051,14 @@ interface ChatHeaderProps {
   onAddProjectScript: (input: NewProjectScriptInput) => Promise<void>;
   onUpdateProjectScript: (scriptId: string, input: NewProjectScriptInput) => Promise<void>;
   onToggleDiff: () => void;
+  onFocusModeChange: (focusMode: boolean) => void;
 }
 
 const ChatHeader = memo(function ChatHeader({
   activeThreadId,
   activeThreadTitle,
   activeProjectName,
+  focusMode,
   isGitRepo,
   openInCwd,
   activeProjectScripts,
@@ -4010,30 +4072,36 @@ const ChatHeader = memo(function ChatHeader({
   onAddProjectScript,
   onUpdateProjectScript,
   onToggleDiff,
+  onFocusModeChange,
 }: ChatHeaderProps) {
+  const focusToggleShortcutLabel = useMemo(
+    () => shortcutLabelForCommand(keybindings, "focus.toggle"),
+    [keybindings],
+  );
+
   return (
     <div className="flex min-w-0 flex-1 items-center gap-2">
       <div className="flex min-w-0 flex-1 items-center gap-2 overflow-hidden sm:gap-3">
-        <SidebarTrigger className="size-7 shrink-0 md:hidden" />
+        {!focusMode ? <SidebarTrigger className="size-7 shrink-0 md:hidden" /> : null}
         <h2
           className="min-w-0 shrink truncate text-sm font-medium text-foreground"
           title={activeThreadTitle}
         >
           {activeThreadTitle}
         </h2>
-        {activeProjectName && (
+        {!focusMode && activeProjectName && (
           <Badge variant="outline" className="max-w-28 shrink-0 truncate">
             {activeProjectName}
           </Badge>
         )}
-        {activeProjectName && !isGitRepo && (
+        {!focusMode && activeProjectName && !isGitRepo && (
           <Badge variant="outline" className="shrink-0 text-[10px] text-amber-700">
             No Git
           </Badge>
         )}
       </div>
       <div className="@container/header-actions flex min-w-0 flex-1 items-center justify-end gap-2 @sm/header-actions:gap-3">
-        {activeProjectScripts && (
+        {!focusMode && activeProjectScripts && (
           <ProjectScriptsControl
             scripts={activeProjectScripts}
             keybindings={keybindings}
@@ -4043,36 +4111,69 @@ const ChatHeader = memo(function ChatHeader({
             onUpdateScript={onUpdateProjectScript}
           />
         )}
-        {activeProjectName && (
+        {!focusMode && activeProjectName && (
           <OpenInPicker
             keybindings={keybindings}
             availableEditors={availableEditors}
             openInCwd={openInCwd}
           />
         )}
-        {activeProjectName && <GitActionsControl gitCwd={gitCwd} activeThreadId={activeThreadId} />}
+        {!focusMode && activeProjectName ? (
+          <GitActionsControl gitCwd={gitCwd} activeThreadId={activeThreadId} />
+        ) : null}
+        {!focusMode ? (
+          <Tooltip>
+            <TooltipTrigger
+              render={
+                <Toggle
+                  className="shrink-0"
+                  pressed={diffOpen}
+                  onPressedChange={onToggleDiff}
+                  aria-label="Toggle diff panel"
+                  variant="outline"
+                  size="xs"
+                  disabled={!isGitRepo}
+                >
+                  <DiffIcon className="size-3" />
+                </Toggle>
+              }
+            />
+            <TooltipPopup side="bottom">
+              {!isGitRepo
+                ? "Diff panel is unavailable because this project is not a git repository."
+                : diffToggleShortcutLabel
+                  ? `Toggle diff panel (${diffToggleShortcutLabel})`
+                  : "Toggle diff panel"}
+            </TooltipPopup>
+          </Tooltip>
+        ) : null}
         <Tooltip>
           <TooltipTrigger
             render={
               <Toggle
                 className="shrink-0"
-                pressed={diffOpen}
-                onPressedChange={onToggleDiff}
-                aria-label="Toggle diff panel"
+                pressed={focusMode}
+                onPressedChange={onFocusModeChange}
+                aria-label={focusMode ? "Exit focus mode" : "Enter focus mode"}
                 variant="outline"
                 size="xs"
-                disabled={!isGitRepo}
               >
-                <DiffIcon className="size-3" />
+                {focusMode ? (
+                  <Minimize2Icon className="size-3" />
+                ) : (
+                  <Maximize2Icon className="size-3" />
+                )}
               </Toggle>
             }
           />
           <TooltipPopup side="bottom">
-            {!isGitRepo
-              ? "Diff panel is unavailable because this project is not a git repository."
-              : diffToggleShortcutLabel
-                ? `Toggle diff panel (${diffToggleShortcutLabel})`
-                : "Toggle diff panel"}
+            {focusMode
+              ? focusToggleShortcutLabel
+                ? `Exit focus mode (${focusToggleShortcutLabel})`
+                : "Exit focus mode"
+              : focusToggleShortcutLabel
+                ? `Enter focus mode (${focusToggleShortcutLabel}) and hide the sidebar, diff panel, terminal, and project tools`
+                : "Enter focus mode and hide the sidebar, diff panel, terminal, and project tools"}
           </TooltipPopup>
         </Tooltip>
       </div>

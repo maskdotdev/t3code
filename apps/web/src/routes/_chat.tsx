@@ -1,12 +1,15 @@
 import { Outlet, createFileRoute, useNavigate } from "@tanstack/react-router";
 import { useEffect } from "react";
 
+import { useAppSettings } from "../appSettings";
 import { DiffWorkerPoolProvider } from "../components/DiffWorkerPoolProvider";
 import ThreadSidebar from "../components/Sidebar";
 import { Sidebar, SidebarProvider } from "~/components/ui/sidebar";
 
 function ChatRouteLayout() {
   const navigate = useNavigate();
+  const { settings } = useAppSettings();
+  const focusMode = settings.focusMode;
 
   useEffect(() => {
     const onMenuAction = window.desktopBridge?.onMenuAction;
@@ -26,13 +29,15 @@ function ChatRouteLayout() {
 
   return (
     <SidebarProvider defaultOpen>
-      <Sidebar
-        side="left"
-        collapsible="offcanvas"
-        className="border-r border-border bg-card text-foreground"
-      >
-        <ThreadSidebar />
-      </Sidebar>
+      {!focusMode ? (
+        <Sidebar
+          side="left"
+          collapsible="offcanvas"
+          className="border-r border-border bg-card text-foreground"
+        >
+          <ThreadSidebar />
+        </Sidebar>
+      ) : null}
       <DiffWorkerPoolProvider>
         <Outlet />
       </DiffWorkerPoolProvider>

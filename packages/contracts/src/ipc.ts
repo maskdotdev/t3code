@@ -40,6 +40,18 @@ import type {
   OrchestrationEvent,
   OrchestrationReadModel,
 } from "./orchestration";
+import type {
+  SpeechToTextAppendAudioInput,
+  SpeechToTextCancelInput,
+  SpeechToTextConfigSnapshot,
+  SpeechToTextConfigUpdatedPayload,
+  SpeechToTextEvent,
+  SpeechToTextStartInput,
+  SpeechToTextStartResult,
+  SpeechToTextStopInput,
+  SpeechToTextStopResult,
+  SpeechToTextUpdateConfigInput,
+} from "./speech";
 import { EditorId } from "./editor";
 
 export interface ContextMenuItem<T extends string = string> {
@@ -137,6 +149,16 @@ export interface NativeApi {
   server: {
     getConfig: () => Promise<ServerConfig>;
     upsertKeybinding: (input: ServerUpsertKeybindingInput) => Promise<ServerUpsertKeybindingResult>;
+  };
+  speech: {
+    getConfig: () => Promise<SpeechToTextConfigSnapshot>;
+    updateConfig: (input: SpeechToTextUpdateConfigInput) => Promise<SpeechToTextConfigSnapshot>;
+    startTranscription: (input: SpeechToTextStartInput) => Promise<SpeechToTextStartResult>;
+    appendAudio: (input: SpeechToTextAppendAudioInput) => Promise<void>;
+    stopTranscription: (input: SpeechToTextStopInput) => Promise<SpeechToTextStopResult>;
+    cancelTranscription: (input: SpeechToTextCancelInput) => Promise<void>;
+    onEvent: (callback: (event: SpeechToTextEvent) => void) => () => void;
+    onConfigUpdated: (callback: (payload: SpeechToTextConfigUpdatedPayload) => void) => () => void;
   };
   orchestration: {
     getSnapshot: () => Promise<OrchestrationReadModel>;

@@ -72,6 +72,14 @@ it.layer(NodeServices.layer)("keybindings", (it) => {
         altKey: false,
         modKey: true,
       });
+      assert.deepEqual(parseKeybindingShortcut("ctrl+shift+f"), {
+        key: "f",
+        metaKey: false,
+        ctrlKey: true,
+        shiftKey: true,
+        altKey: false,
+        modKey: false,
+      });
     }),
   );
 

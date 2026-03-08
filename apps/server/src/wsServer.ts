@@ -33,6 +33,7 @@ import {
   Effect,
   Exit,
   FileSystem,
+  Fiber,
   Layer,
   Path,
   Ref,
@@ -73,6 +74,7 @@ import {
 import { parseBase64DataUrl } from "./imageMime.ts";
 import { AnalyticsService } from "./telemetry/Services/AnalyticsService.ts";
 import { expandHomePath } from "./os-jank.ts";
+import { SpeechToTextService } from "./speech/Services/SpeechToTextService";
 
 /**
  * ServerShape - Service API for server lifecycle control.
@@ -216,6 +218,7 @@ export type ServerRuntimeServices =
   | GitCore
   | TerminalManager
   | Keybindings
+  | SpeechToTextService
   | Open
   | AnalyticsService;
 
@@ -253,6 +256,7 @@ export const createServer = Effect.fn(function* (): Effect.fn.Return<
   const gitManager = yield* GitManager;
   const terminalManager = yield* TerminalManager;
   const keybindingsManager = yield* Keybindings;
+  const speechToTextService = yield* SpeechToTextService;
   const providerHealth = yield* ProviderHealth;
   const git = yield* GitCore;
   const fileSystem = yield* FileSystem.FileSystem;
@@ -293,6 +297,15 @@ export const createServer = Effect.fn(function* (): Effect.fn.Return<
       }
     }
     logOutgoingPush(push, recipients);
+  });
+
+  const sendPushToClient = Effect.fnUntraced(function* (ws: WebSocket, push: WsPush) {
+    if (ws.readyState !== ws.OPEN) {
+      return;
+    }
+    const message = yield* encodePush(push);
+    ws.send(message);
+    logOutgoingPush(push, 1);
   });
 
   const onTerminalEvent = Effect.fnUntraced(function* (event: TerminalEvent) {
@@ -636,6 +649,14 @@ export const createServer = Effect.fn(function* (): Effect.fn.Return<
     }),
   ).pipe(Effect.forkIn(subscriptionsScope));
 
+  yield* Stream.runForEach(speechToTextService.streamConfigChanges, (event) =>
+    broadcastPush({
+      type: "push",
+      channel: WS_CHANNELS.speechConfigUpdated,
+      data: event,
+    }),
+  ).pipe(Effect.forkIn(subscriptionsScope));
+
   yield* Scope.provide(orchestrationReactor.start, subscriptionsScope);
 
   let welcomeBootstrapProjectId: ProjectId | undefined;
@@ -726,7 +747,10 @@ export const createServer = Effect.fn(function* (): Effect.fn.Return<
     ]),
   );
 
-  const routeRequest = Effect.fnUntraced(function* (request: WebSocketRequest) {
+  const routeRequest = Effect.fnUntraced(function* (
+    ws: WebSocket,
+    request: WebSocketRequest,
+  ) {
     switch (request.body._tag) {
       case ORCHESTRATION_WS_METHODS.getSnapshot:
         return yield* projectionReadModelQuery.getSnapshot();
@@ -893,6 +917,60 @@ export const createServer = Effect.fn(function* (): Effect.fn.Return<
         return { keybindings: keybindingsConfig, issues: [] };
       }
 
+      case WS_METHODS.speechGetConfig:
+        return yield* speechToTextService.getConfig();
+
+      case WS_METHODS.speechUpdateConfig: {
+        const body = stripRequestTag(request.body);
+        return yield* speechToTextService.updateConfig(body);
+      }
+
+      case WS_METHODS.speechStartTranscription: {
+        const body = stripRequestTag(request.body);
+        const clientId = (ws as { __t3SpeechClientId?: string }).__t3SpeechClientId;
+        if (!clientId) {
+          return yield* new RouteRequestError({
+            message: "Speech client connection is not initialized.",
+          });
+        }
+        return yield* speechToTextService.startTranscription(clientId, body);
+      }
+
+      case WS_METHODS.speechAppendAudio: {
+        const body = stripRequestTag(request.body);
+        const clientId = (ws as { __t3SpeechClientId?: string }).__t3SpeechClientId;
+        if (!clientId) {
+          return yield* new RouteRequestError({
+            message: "Speech client connection is not initialized.",
+          });
+        }
+        yield* speechToTextService.appendAudio(clientId, body);
+        return undefined;
+      }
+
+      case WS_METHODS.speechStopTranscription: {
+        const body = stripRequestTag(request.body);
+        const clientId = (ws as { __t3SpeechClientId?: string }).__t3SpeechClientId;
+        if (!clientId) {
+          return yield* new RouteRequestError({
+            message: "Speech client connection is not initialized.",
+          });
+        }
+        return yield* speechToTextService.stopTranscription(clientId, body);
+      }
+
+      case WS_METHODS.speechCancelTranscription: {
+        const body = stripRequestTag(request.body);
+        const clientId = (ws as { __t3SpeechClientId?: string }).__t3SpeechClientId;
+        if (!clientId) {
+          return yield* new RouteRequestError({
+            message: "Speech client connection is not initialized.",
+          });
+        }
+        yield* speechToTextService.cancelTranscription(clientId, body);
+        return undefined;
+      }
+
       default: {
         const _exhaustiveCheck: never = request.body;
         return yield* new RouteRequestError({
@@ -925,7 +1003,7 @@ export const createServer = Effect.fn(function* (): Effect.fn.Return<
       return;
     }
 
-    const result = yield* Effect.exit(routeRequest(request.value));
+    const result = yield* Effect.exit(routeRequest(ws, request.value));
     if (result._tag === "Failure") {
       const errorResponse = yield* encodeResponse({
         id: request.value.id,
@@ -968,7 +1046,20 @@ export const createServer = Effect.fn(function* (): Effect.fn.Return<
   });
 
   wss.on("connection", (ws) => {
+    const speechClientId = crypto.randomUUID();
+    (ws as { __t3SpeechClientId?: string }).__t3SpeechClientId = speechClientId;
     void runPromise(Ref.update(clients, (clients) => clients.add(ws)));
+    const speechEventFiber = Effect.runFork(
+      speechToTextService.streamClientEvents(speechClientId).pipe(
+        Stream.runForEach((event) =>
+          sendPushToClient(ws, {
+            type: "push",
+            channel: WS_CHANNELS.speechEvent,
+            data: event,
+          }),
+        ),
+      ),
+    );
 
     const segments = cwd.split(/[/\\]/).filter(Boolean);
     const projectName = segments[segments.length - 1] ?? "project";
@@ -995,20 +1086,22 @@ export const createServer = Effect.fn(function* (): Effect.fn.Return<
     });
 
     ws.on("close", () => {
+      Effect.runFork(Fiber.interrupt(speechEventFiber));
       void runPromise(
         Ref.update(clients, (clients) => {
           clients.delete(ws);
           return clients;
-        }),
+        }).pipe(Effect.tap(() => speechToTextService.disconnectClient(speechClientId))),
       );
     });
 
     ws.on("error", () => {
+      Effect.runFork(Fiber.interrupt(speechEventFiber));
       void runPromise(
         Ref.update(clients, (clients) => {
           clients.delete(ws);
           return clients;
-        }),
+        }).pipe(Effect.tap(() => speechToTextService.disconnectClient(speechClientId))),
       );
     });
   });

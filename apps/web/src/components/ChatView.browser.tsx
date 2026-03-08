@@ -409,6 +409,15 @@ async function waitForInteractionModeButton(expectedLabel: "Chat" | "Plan"): Pro
   );
 }
 
+async function waitForFocusModeButton(
+  expectedLabel: "Enter focus mode" | "Exit focus mode",
+): Promise<HTMLButtonElement> {
+  return waitForElement(
+    () => document.querySelector<HTMLButtonElement>(`button[aria-label="${expectedLabel}"]`),
+    `Unable to find ${expectedLabel} button.`,
+  );
+}
+
 async function waitForImagesToLoad(scope: ParentNode): Promise<void> {
   const images = Array.from(scope.querySelectorAll("img"));
   if (images.length === 0) {
@@ -871,6 +880,116 @@ describe("ChatView timeline estimator parity (full app)", () => {
           );
         },
         { timeout: 8_000, interval: 16 },
+      );
+    } finally {
+      await mounted.cleanup();
+    }
+  });
+
+  it("hides and restores project controls when toggling focus mode", async () => {
+    const mounted = await mountChatView({
+      viewport: DEFAULT_VIEWPORT,
+      snapshot: createSnapshotForTargetUser({
+        targetMessageId: "msg-user-target-focus-mode" as MessageId,
+        targetText: "focus target",
+      }),
+      configureFixture: (nextFixture) => {
+        nextFixture.serverConfig = {
+          ...nextFixture.serverConfig,
+          availableEditors: ["vscode"],
+        };
+      },
+    });
+
+    try {
+      const focusModeButton = await waitForFocusModeButton("Enter focus mode");
+      focusModeButton.click();
+
+      await waitForFocusModeButton("Exit focus mode");
+      expect(document.querySelector('button[aria-label="Toggle diff panel"]')).toBeNull();
+      expect(
+        Array.from(document.querySelectorAll("button")).find(
+          (button) => button.textContent?.trim() === "Open",
+        ),
+      ).toBeUndefined();
+
+      const exitFocusModeButton = await waitForFocusModeButton("Exit focus mode");
+      exitFocusModeButton.click();
+
+      await waitForFocusModeButton("Enter focus mode");
+      await waitForElement(
+        () => document.querySelector<HTMLButtonElement>('button[aria-label="Toggle diff panel"]'),
+        "Unable to find diff toggle after leaving focus mode.",
+      );
+      await waitForElement(
+        () =>
+          Array.from(document.querySelectorAll("button")).find(
+            (button) => button.textContent?.trim() === "Open",
+          ) as HTMLButtonElement | null,
+        "Unable to find Open button after leaving focus mode.",
+      );
+    } finally {
+      await mounted.cleanup();
+    }
+  });
+
+  it("toggles focus mode with Ctrl+Shift+F", async () => {
+    const mounted = await mountChatView({
+      viewport: DEFAULT_VIEWPORT,
+      snapshot: createSnapshotForTargetUser({
+        targetMessageId: "msg-user-target-focus-shortcut" as MessageId,
+        targetText: "focus shortcut target",
+      }),
+      configureFixture: (nextFixture) => {
+        nextFixture.serverConfig = {
+          ...nextFixture.serverConfig,
+          availableEditors: ["vscode"],
+          keybindings: [
+            {
+              command: "focus.toggle",
+              shortcut: {
+                key: "f",
+                metaKey: false,
+                ctrlKey: true,
+                shiftKey: true,
+                altKey: false,
+                modKey: false,
+              },
+            },
+          ],
+        };
+      },
+    });
+
+    try {
+      await waitForFocusModeButton("Enter focus mode");
+      window.dispatchEvent(
+        new KeyboardEvent("keydown", {
+          key: "f",
+          ctrlKey: true,
+          shiftKey: true,
+          bubbles: true,
+          cancelable: true,
+        }),
+      );
+
+      await waitForFocusModeButton("Exit focus mode");
+      expect(document.querySelector('button[aria-label="Toggle diff panel"]')).toBeNull();
+
+      window.dispatchEvent(
+        new KeyboardEvent("keydown", {
+          key: "f",
+          ctrlKey: true,
+          shiftKey: true,
+          bubbles: true,
+          cancelable: true,
+        }),
+      );
+
+      await waitForFocusModeButton("Enter focus mode");
+      await waitForElement(
+        () => document.querySelector<HTMLButtonElement>('button[aria-label="Toggle diff panel"]'),
+        "Unable to find diff toggle after leaving focus mode with shortcut.",
       );
     } finally {
       await mounted.cleanup();

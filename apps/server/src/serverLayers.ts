@@ -35,6 +35,12 @@ import { GitServiceLive } from "./git/Layers/GitService";
 import { BunPtyAdapterLive } from "./terminal/Layers/BunPTY";
 import { NodePtyAdapterLive } from "./terminal/Layers/NodePTY";
 import { AnalyticsService } from "./telemetry/Services/AnalyticsService";
+import { SpeechToTextConfigLive } from "./speech/Layers/SpeechToTextConfig";
+import { SpeechToTextAdapterRegistryLive } from "./speech/Layers/SpeechToTextAdapterRegistry";
+import { SpeechToTextServiceLive } from "./speech/Layers/SpeechToTextService";
+import { ElevenLabsSpeechToTextAdapterLive } from "./speech/Layers/SpeechToTextElevenLabsAdapter";
+import { GeminiSpeechToTextAdapterLive } from "./speech/Layers/SpeechToTextGeminiAdapter";
+import { LocalHttpSpeechToTextAdapterLive } from "./speech/Layers/SpeechToTextLocalHttpAdapter";
 
 export function makeServerProviderLayer(): Layer.Layer<
   ProviderService,
@@ -125,5 +131,15 @@ export function makeServerRuntimeServicesLayer() {
     gitManagerLayer,
     terminalLayer,
     KeybindingsLive,
+    SpeechToTextServiceLive.pipe(
+      Layer.provideMerge(SpeechToTextConfigLive),
+      Layer.provideMerge(
+        SpeechToTextAdapterRegistryLive.pipe(
+          Layer.provide(LocalHttpSpeechToTextAdapterLive),
+          Layer.provideMerge(ElevenLabsSpeechToTextAdapterLive),
+          Layer.provideMerge(GeminiSpeechToTextAdapterLive),
+        ),
+      ),
+    ),
   ).pipe(Layer.provideMerge(NodeServices.layer));
 }

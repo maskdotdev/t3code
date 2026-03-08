@@ -1,6 +1,7 @@
-import { describe, expect, it } from "vitest";
+import { beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 
 import {
+  getAppSettingsSnapshot,
   getAppModelOptions,
   getSlashModelOptions,
   normalizeCustomModelSlugs,
@@ -8,6 +9,60 @@ import {
   shouldShowFastTierIcon,
   resolveAppModelSelection,
 } from "./appSettings";
+
+const storage = new Map<string, string>();
+const localStorageMock = {
+  clear() {
+    storage.clear();
+  },
+  getItem(key: string) {
+    return storage.get(key) ?? null;
+  },
+  key(index: number) {
+    return [...storage.keys()][index] ?? null;
+  },
+  removeItem(key: string) {
+    storage.delete(key);
+  },
+  setItem(key: string, value: string) {
+    storage.set(key, value);
+  },
+  get length() {
+    return storage.size;
+  },
+} satisfies Storage;
+
+beforeAll(() => {
+  vi.stubGlobal("window", { localStorage: localStorageMock });
+  vi.stubGlobal("localStorage", localStorageMock);
+});
+
+beforeEach(() => {
+  localStorage.clear();
+});
+
+describe("getAppSettingsSnapshot", () => {
+  it("defaults focus mode to off", () => {
+    expect(getAppSettingsSnapshot().focusMode).toBe(false);
+  });
+
+  it("reads persisted focus mode", () => {
+    localStorage.setItem(
+      "t3code:app-settings:v1",
+      JSON.stringify({
+        codexBinaryPath: "",
+        codexHomePath: "",
+        confirmThreadDelete: true,
+        enableAssistantStreaming: false,
+        focusMode: true,
+        codexServiceTier: "auto",
+        customCodexModels: [],
+      }),
+    );
+
+    expect(getAppSettingsSnapshot().focusMode).toBe(true);
+  });
+});
 
 describe("normalizeCustomModelSlugs", () => {
   it("normalizes aliases, removes built-ins, and deduplicates values", () => {

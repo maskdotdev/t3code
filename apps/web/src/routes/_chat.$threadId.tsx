@@ -2,6 +2,7 @@ import { ThreadId } from "@t3tools/contracts";
 import { createFileRoute, useNavigate } from "@tanstack/react-router";
 import { Suspense, lazy, type ReactNode, useCallback, useEffect } from "react";
 
+import { useAppSettings } from "../appSettings";
 import ChatView from "../components/ChatView";
 import { useComposerDraftStore } from "../composerDraftStore";
 import { parseDiffRouteSearch, stripDiffSearchParams } from "../diffRouteSearch";
@@ -135,6 +136,7 @@ const DiffPanelInlineSidebar = (props: {
 function ChatThreadRouteView() {
   const threadsHydrated = useStore((store) => store.threadsHydrated);
   const navigate = useNavigate();
+  const { settings } = useAppSettings();
   const threadId = Route.useParams({
     select: (params) => ThreadId.makeUnsafe(params.threadId),
   });
@@ -145,6 +147,7 @@ function ChatThreadRouteView() {
   );
   const routeThreadExists = threadExists || draftThreadExists;
   const diffOpen = search.diff === "1";
+  const focusMode = settings.focusMode;
   const shouldUseDiffSheet = useMediaQuery(DIFF_INLINE_LAYOUT_MEDIA_QUERY);
   const closeDiff = useCallback(() => {
     void navigate({
@@ -177,6 +180,19 @@ function ChatThreadRouteView() {
     }
   }, [navigate, routeThreadExists, threadsHydrated, threadId]);
 
+  useEffect(() => {
+    if (!focusMode || !diffOpen) {
+      return;
+    }
+
+    void navigate({
+      to: "/$threadId",
+      params: { threadId },
+      replace: true,
+      search: (previous) => stripDiffSearchParams(previous),
+    });
+  }, [diffOpen, focusMode, navigate, threadId]);
+
   if (!threadsHydrated || !routeThreadExists) {
     return null;
   }
@@ -187,7 +203,13 @@ function ChatThreadRouteView() {
         <SidebarInset className="h-dvh min-h-0 overflow-hidden overscroll-y-none bg-background text-foreground">
           <ChatView key={threadId} threadId={threadId} />
         </SidebarInset>
-        <DiffPanelInlineSidebar diffOpen={diffOpen} onCloseDiff={closeDiff} onOpenDiff={openDiff} />
+        {!focusMode ? (
+          <DiffPanelInlineSidebar
+            diffOpen={diffOpen}
+            onCloseDiff={closeDiff}
+            onOpenDiff={openDiff}
+          />
+        ) : null}
       </>
     );
   }
@@ -197,11 +219,13 @@ function ChatThreadRouteView() {
       <SidebarInset className="h-dvh min-h-0 overflow-hidden overscroll-y-none bg-background text-foreground">
         <ChatView key={threadId} threadId={threadId} />
       </SidebarInset>
-      <DiffPanelSheet diffOpen={diffOpen} onCloseDiff={closeDiff}>
-        <Suspense fallback={<DiffLoadingFallback inline={false} />}>
-          <DiffPanel mode="sheet" />
-        </Suspense>
-      </DiffPanelSheet>
+      {!focusMode ? (
+        <DiffPanelSheet diffOpen={diffOpen} onCloseDiff={closeDiff}>
+          <Suspense fallback={<DiffLoadingFallback inline={false} />}>
+            <DiffPanel mode="sheet" />
+          </Suspense>
+        </DiffPanelSheet>
+      ) : null}
     </>
   );
 }

@@ -1,9 +1,9 @@
 import { createFileRoute } from "@tanstack/react-router";
-import { useQuery } from "@tanstack/react-query";
-import { useCallback, useState } from "react";
-import { type ProviderKind } from "@t3tools/contracts";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { useCallback, useEffect, useState } from "react";
+import { type ProviderKind, type SpeechToTextProviderKind, type SpeechToTextSettings } from "@t3tools/contracts";
 import { getModelOptions, normalizeModelSlug } from "@t3tools/shared/model";
-import { ZapIcon } from "lucide-react";
+import { EyeIcon, EyeOffIcon, ZapIcon } from "lucide-react";
 
 import {
   APP_SERVICE_TIER_OPTIONS,
@@ -14,13 +14,49 @@ import {
 import { isElectron } from "../env";
 import { useTheme } from "../hooks/useTheme";
 import { serverConfigQueryOptions } from "../lib/serverReactQuery";
+import { speechConfigQueryOptions, speechQueryKeys } from "../lib/speechReactQuery";
 import { ensureNativeApi } from "../nativeApi";
 import { preferredTerminalEditor } from "../terminal-links";
 import { Button } from "../components/ui/button";
 import { Input } from "../components/ui/input";
+import { InputGroup, InputGroupAddon, InputGroupInput } from "../components/ui/input-group";
 import { Select, SelectItem, SelectPopup, SelectTrigger, SelectValue } from "../components/ui/select";
 import { Switch } from "../components/ui/switch";
 import { SidebarInset } from "~/components/ui/sidebar";
+import { Badge } from "../components/ui/badge";
+
+const DEFAULT_SPEECH_TO_TEXT_SETTINGS: SpeechToTextSettings = {
+  version: 1,
+  defaultProvider: "local-http",
+  providers: {
+    "local-http": {
+      enabled: true,
+      baseUrl: "http://127.0.0.1:8177",
+      apiKey: "",
+      model: "",
+    },
+    elevenlabs: {
+      enabled: false,
+      apiKey: "",
+      modelId: "scribe_v2_realtime",
+      languageCode: "",
+    },
+    gemini: {
+      enabled: false,
+      apiKey: "",
+      model: "gemini-3-flash-preview",
+    },
+  },
+};
+
+const SPEECH_PROVIDER_OPTIONS: Array<{
+  value: SpeechToTextProviderKind;
+  label: string;
+}> = [
+  { value: "local-http", label: "Local HTTP" },
+  { value: "elevenlabs", label: "ElevenLabs" },
+  { value: "gemini", label: "Gemini" },
+];
 
 const THEME_OPTIONS = [
   {
@@ -86,12 +122,60 @@ function patchCustomModels(provider: ProviderKind, models: string[]) {
   }
 }
 
+function speechProviderLabel(provider: SpeechToTextProviderKind): string {
+  return SPEECH_PROVIDER_OPTIONS.find((option) => option.value === provider)?.label ?? provider;
+}
+
+interface SecretInputProps {
+  readonly value: string;
+  readonly onChange: (value: string) => void;
+  readonly placeholder?: string;
+}
+
+function SecretInput(props: SecretInputProps) {
+  const [revealed, setRevealed] = useState(false);
+
+  return (
+    <InputGroup>
+      <InputGroupInput
+        autoCapitalize="none"
+        autoComplete="off"
+        autoCorrect="off"
+        placeholder={props.placeholder}
+        spellCheck={false}
+        type={revealed ? "text" : "password"}
+        value={props.value}
+        onChange={(event) => props.onChange(event.target.value)}
+      />
+      <InputGroupAddon align="inline-end">
+        <button
+          type="button"
+          className="inline-flex size-7 items-center justify-center rounded-md text-muted-foreground transition-colors hover:text-foreground focus-visible:outline-none"
+          aria-label={revealed ? "Hide API key" : "Show API key"}
+          onClick={() => setRevealed((current) => !current)}
+        >
+          {revealed ? <EyeOffIcon className="size-4" /> : <EyeIcon className="size-4" />}
+        </button>
+      </InputGroupAddon>
+    </InputGroup>
+  );
+}
+
 function SettingsRouteView() {
+  const queryClient = useQueryClient();
   const { theme, setTheme, resolvedTheme } = useTheme();
   const { settings, defaults, updateSettings } = useAppSettings();
   const serverConfigQuery = useQuery(serverConfigQueryOptions());
+  const speechConfigQuery = useQuery(speechConfigQueryOptions());
   const [isOpeningKeybindings, setIsOpeningKeybindings] = useState(false);
   const [openKeybindingsError, setOpenKeybindingsError] = useState<string | null>(null);
+  const [isOpeningSpeechConfig, setIsOpeningSpeechConfig] = useState(false);
+  const [openSpeechConfigError, setOpenSpeechConfigError] = useState<string | null>(null);
+  const [speechSaveError, setSpeechSaveError] = useState<string | null>(null);
+  const [speechDraft, setSpeechDraft] = useState<SpeechToTextSettings | null>(null);
+  const [speechSettingsProvider, setSpeechSettingsProvider] =
+    useState<SpeechToTextProviderKind | null>(null);
+  const [isSavingSpeechConfig, setIsSavingSpeechConfig] = useState(false);
   const [customModelInputByProvider, setCustomModelInputByProvider] = useState<
     Record<ProviderKind, string>
   >({
@@ -105,6 +189,25 @@ function SettingsRouteView() {
   const codexHomePath = settings.codexHomePath;
   const codexServiceTier = settings.codexServiceTier;
   const keybindingsConfigPath = serverConfigQuery.data?.keybindingsConfigPath ?? null;
+  const speechSnapshot = speechConfigQuery.data ?? null;
+  const speechConfigPath = speechSnapshot?.configPath ?? null;
+
+  useEffect(() => {
+    if (!speechSnapshot) return;
+    setSpeechDraft(speechSnapshot.settings);
+  }, [speechSnapshot]);
+
+  useEffect(() => {
+    if (!speechDraft) return;
+    setSpeechSettingsProvider(speechDraft.defaultProvider);
+  }, [speechDraft]);
+
+  useEffect(() => {
+    const api = ensureNativeApi();
+    return api.speech.onConfigUpdated(() => {
+      void queryClient.invalidateQueries({ queryKey: speechQueryKeys.config() });
+    });
+  }, [queryClient]);
 
   const openKeybindingsFile = useCallback(() => {
     if (!keybindingsConfigPath) return;
@@ -122,6 +225,48 @@ function SettingsRouteView() {
         setIsOpeningKeybindings(false);
       });
   }, [keybindingsConfigPath]);
+
+  const openSpeechConfigFile = useCallback(() => {
+    if (!speechConfigPath) return;
+    setOpenSpeechConfigError(null);
+    setIsOpeningSpeechConfig(true);
+    const api = ensureNativeApi();
+    void api.shell
+      .openInEditor(speechConfigPath, preferredTerminalEditor())
+      .catch((error) => {
+        setOpenSpeechConfigError(
+          error instanceof Error ? error.message : "Unable to open speech config file.",
+        );
+      })
+      .finally(() => {
+        setIsOpeningSpeechConfig(false);
+      });
+  }, [speechConfigPath]);
+
+  const saveSpeechConfig = useCallback(() => {
+    if (!speechDraft) return;
+    setSpeechSaveError(null);
+    setIsSavingSpeechConfig(true);
+    const api = ensureNativeApi();
+    void api.speech
+      .updateConfig(speechDraft)
+      .then((nextSnapshot) => {
+        queryClient.setQueryData(speechQueryKeys.config(), nextSnapshot);
+      })
+      .catch((error) => {
+        setSpeechSaveError(
+          error instanceof Error ? error.message : "Unable to save speech settings.",
+        );
+      })
+      .finally(() => {
+        setIsSavingSpeechConfig(false);
+      });
+  }, [queryClient, speechDraft]);
+
+  const resetSpeechConfig = useCallback(() => {
+    setSpeechDraft(DEFAULT_SPEECH_TO_TEXT_SETTINGS);
+    setSpeechSettingsProvider(DEFAULT_SPEECH_TO_TEXT_SETTINGS.defaultProvider);
+  }, []);
 
   const addCustomModel = useCallback((provider: ProviderKind) => {
     const customModelInput = customModelInputByProvider[provider];
@@ -240,6 +385,21 @@ function SettingsRouteView() {
               <p className="mt-4 text-xs text-muted-foreground">
                 Active theme: <span className="font-medium text-foreground">{resolvedTheme}</span>
               </p>
+
+              <div className="mt-5 flex items-start justify-between gap-4 rounded-xl border border-border/70 bg-background/65 px-4 py-3">
+                <div className="space-y-1">
+                  <div className="text-sm font-medium text-foreground">Focus mode</div>
+                  <p className="text-xs text-muted-foreground">
+                    Hide the thread sidebar, diff panel, terminal drawer, branch bar, and project
+                    actions until you turn it off.
+                  </p>
+                </div>
+                <Switch
+                  checked={settings.focusMode}
+                  aria-label="Toggle focus mode"
+                  onCheckedChange={(checked) => updateSettings({ focusMode: checked })}
+                />
+              </div>
             </section>
 
             <section className="rounded-2xl border border-border bg-card p-5">
@@ -551,6 +711,339 @@ function SettingsRouteView() {
                 </p>
                 {openKeybindingsError ? (
                   <p className="text-xs text-destructive">{openKeybindingsError}</p>
+                ) : null}
+              </div>
+            </section>
+
+            <section className="rounded-2xl border border-border bg-card p-5">
+              <div className="mb-4">
+                <h2 className="text-sm font-medium text-foreground">Speech to Text</h2>
+                <p className="mt-1 text-xs text-muted-foreground">
+                  Configure composer dictation providers stored in <code>speech-to-text.json</code>.
+                </p>
+              </div>
+
+              <div className="space-y-5">
+                <label className="block space-y-1">
+                  <span className="text-xs font-medium text-foreground">Provider</span>
+                  <Select
+                    items={SPEECH_PROVIDER_OPTIONS}
+                    value={speechDraft?.defaultProvider ?? null}
+                    onValueChange={(value) => {
+                      if (!value || !speechDraft) return;
+                      const provider = value as SpeechToTextProviderKind;
+                      setSpeechDraft({ ...speechDraft, defaultProvider: provider });
+                      setSpeechSettingsProvider(provider);
+                    }}
+                  >
+                    <SelectTrigger disabled={!speechDraft}>
+                      <SelectValue placeholder="Select provider" />
+                    </SelectTrigger>
+                    <SelectPopup alignItemWithTrigger={false}>
+                      {SPEECH_PROVIDER_OPTIONS.map((provider) => (
+                        <SelectItem key={provider.value} value={provider.value}>
+                          {provider.label}
+                        </SelectItem>
+                      ))}
+                    </SelectPopup>
+                  </Select>
+                </label>
+
+                {speechDraft && speechSettingsProvider ? (
+                  <div className="rounded-xl border border-border bg-background p-4">
+                    {(() => {
+                      const provider = speechSettingsProvider;
+                      const status =
+                        speechSnapshot?.providers.find((entry) => entry.provider === provider) ?? null;
+                      const settingsForProvider = speechDraft.providers[provider];
+                      return (
+                        <>
+                          <div className="flex flex-wrap items-center justify-between gap-3">
+                            <div>
+                              <div className="flex items-center gap-2">
+                                <h3 className="text-sm font-medium text-foreground">
+                                  {speechProviderLabel(provider)}
+                                </h3>
+                                {status ? (
+                                  <Badge
+                                    variant={
+                                      status.status === "ready"
+                                        ? "default"
+                                        : status.status === "warning"
+                                          ? "secondary"
+                                          : "destructive"
+                                    }
+                                  >
+                                    {status.status}
+                                  </Badge>
+                                ) : null}
+                              </div>
+                              {status?.message ? (
+                                <p className="mt-1 text-xs text-muted-foreground">{status.message}</p>
+                              ) : null}
+                            </div>
+                            <Switch
+                              checked={settingsForProvider.enabled}
+                              onCheckedChange={(checked) => {
+                                setSpeechDraft((current) =>
+                                  current
+                                    ? {
+                                        ...current,
+                                        providers: {
+                                          ...current.providers,
+                                          [provider]: {
+                                            ...current.providers[provider],
+                                            enabled: Boolean(checked),
+                                          },
+                                        },
+                                      }
+                                    : current,
+                                );
+                              }}
+                              aria-label={`Enable ${provider} speech provider`}
+                            />
+                          </div>
+
+                          <div className="mt-4 grid gap-3 sm:grid-cols-2">
+                            {provider === "local-http" ? (
+                              <>
+                                <label className="space-y-1 sm:col-span-2">
+                                  <span className="text-xs font-medium text-foreground">Base URL</span>
+                                  <Input
+                                    value={speechDraft.providers["local-http"].baseUrl}
+                                    onChange={(event) =>
+                                      setSpeechDraft((current) =>
+                                        current
+                                          ? {
+                                              ...current,
+                                              providers: {
+                                                ...current.providers,
+                                                "local-http": {
+                                                  ...current.providers["local-http"],
+                                                  baseUrl: event.target.value,
+                                                },
+                                              },
+                                            }
+                                          : current,
+                                      )
+                                    }
+                                  />
+                                </label>
+                                <label className="space-y-1">
+                                  <span className="text-xs font-medium text-foreground">API key</span>
+                                  <SecretInput
+                                    placeholder="Optional"
+                                    value={speechDraft.providers["local-http"].apiKey}
+                                    onChange={(value) =>
+                                      setSpeechDraft((current) =>
+                                        current
+                                          ? {
+                                              ...current,
+                                              providers: {
+                                                ...current.providers,
+                                                "local-http": {
+                                                  ...current.providers["local-http"],
+                                                  apiKey: value,
+                                                },
+                                              },
+                                            }
+                                          : current,
+                                      )
+                                    }
+                                  />
+                                </label>
+                                <label className="space-y-1">
+                                  <span className="text-xs font-medium text-foreground">Model</span>
+                                  <Input
+                                    value={speechDraft.providers["local-http"].model}
+                                    onChange={(event) =>
+                                      setSpeechDraft((current) =>
+                                        current
+                                          ? {
+                                              ...current,
+                                              providers: {
+                                                ...current.providers,
+                                                "local-http": {
+                                                  ...current.providers["local-http"],
+                                                  model: event.target.value,
+                                                },
+                                              },
+                                            }
+                                          : current,
+                                      )
+                                    }
+                                  />
+                                </label>
+                              </>
+                            ) : provider === "elevenlabs" ? (
+                              <>
+                                <label className="space-y-1 sm:col-span-2">
+                                  <span className="text-xs font-medium text-foreground">API key</span>
+                                  <SecretInput
+                                    value={speechDraft.providers.elevenlabs.apiKey}
+                                    onChange={(value) =>
+                                      setSpeechDraft((current) =>
+                                        current
+                                          ? {
+                                              ...current,
+                                              providers: {
+                                                ...current.providers,
+                                                elevenlabs: {
+                                                  ...current.providers.elevenlabs,
+                                                  apiKey: value,
+                                                },
+                                              },
+                                            }
+                                          : current,
+                                      )
+                                    }
+                                  />
+                                </label>
+                                <label className="space-y-1">
+                                  <span className="text-xs font-medium text-foreground">Model ID</span>
+                                  <Input
+                                    value={speechDraft.providers.elevenlabs.modelId}
+                                    onChange={(event) =>
+                                      setSpeechDraft((current) =>
+                                        current
+                                          ? {
+                                              ...current,
+                                              providers: {
+                                                ...current.providers,
+                                                elevenlabs: {
+                                                  ...current.providers.elevenlabs,
+                                                  modelId: event.target.value,
+                                                },
+                                              },
+                                            }
+                                          : current,
+                                      )
+                                    }
+                                  />
+                                </label>
+                                <label className="space-y-1">
+                                  <span className="text-xs font-medium text-foreground">Language code</span>
+                                  <Input
+                                    value={speechDraft.providers.elevenlabs.languageCode}
+                                    onChange={(event) =>
+                                      setSpeechDraft((current) =>
+                                        current
+                                          ? {
+                                              ...current,
+                                              providers: {
+                                                ...current.providers,
+                                                elevenlabs: {
+                                                  ...current.providers.elevenlabs,
+                                                  languageCode: event.target.value,
+                                                },
+                                              },
+                                            }
+                                          : current,
+                                      )
+                                    }
+                                  />
+                                </label>
+                              </>
+                            ) : (
+                              <>
+                                <label className="space-y-1 sm:col-span-2">
+                                  <span className="text-xs font-medium text-foreground">API key</span>
+                                  <SecretInput
+                                    value={speechDraft.providers.gemini.apiKey}
+                                    onChange={(value) =>
+                                      setSpeechDraft((current) =>
+                                        current
+                                          ? {
+                                              ...current,
+                                              providers: {
+                                                ...current.providers,
+                                                gemini: {
+                                                  ...current.providers.gemini,
+                                                  apiKey: value,
+                                                },
+                                              },
+                                            }
+                                          : current,
+                                      )
+                                    }
+                                  />
+                                </label>
+                                <label className="space-y-1 sm:col-span-2">
+                                  <span className="text-xs font-medium text-foreground">Model</span>
+                                  <Input
+                                    value={speechDraft.providers.gemini.model}
+                                    onChange={(event) =>
+                                      setSpeechDraft((current) =>
+                                        current
+                                          ? {
+                                              ...current,
+                                              providers: {
+                                                ...current.providers,
+                                                gemini: {
+                                                  ...current.providers.gemini,
+                                                  model: event.target.value,
+                                                },
+                                              },
+                                            }
+                                          : current,
+                                      )
+                                    }
+                                  />
+                                  <p className="text-[11px] text-muted-foreground">
+                                    Default Google model id: <code>gemini-3-flash-preview</code>
+                                  </p>
+                                </label>
+                              </>
+                            )}
+                          </div>
+                        </>
+                      );
+                    })()}
+                  </div>
+                ) : null}
+
+                <div className="flex flex-wrap items-center justify-between gap-3 rounded-lg border border-border bg-background px-3 py-2">
+                  <div className="min-w-0 flex-1">
+                    <p className="text-xs font-medium text-foreground">Config file path</p>
+                    <p className="mt-1 break-all font-mono text-[11px] text-muted-foreground">
+                      {speechConfigPath ?? "Resolving speech config path..."}
+                    </p>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <Button size="xs" variant="outline" onClick={resetSpeechConfig} disabled={!speechDraft}>
+                      Reset to defaults
+                    </Button>
+                    <Button
+                      size="xs"
+                      variant="outline"
+                      disabled={!speechConfigPath || isOpeningSpeechConfig}
+                      onClick={openSpeechConfigFile}
+                    >
+                      {isOpeningSpeechConfig ? "Opening..." : "Open speech-to-text.json"}
+                    </Button>
+                    <Button size="xs" onClick={saveSpeechConfig} disabled={!speechDraft || isSavingSpeechConfig}>
+                      {isSavingSpeechConfig ? "Saving..." : "Save speech settings"}
+                    </Button>
+                  </div>
+                </div>
+
+                {speechSnapshot?.issues.length ? (
+                  <div className="space-y-1">
+                    {speechSnapshot.issues.map((issue) => (
+                      <p
+                        key={`${issue.kind}:${"provider" in issue ? issue.provider : "global"}:${issue.message}`}
+                        className="text-xs text-destructive"
+                      >
+                        {issue.message}
+                      </p>
+                    ))}
+                  </div>
+                ) : null}
+                {openSpeechConfigError ? (
+                  <p className="text-xs text-destructive">{openSpeechConfigError}</p>
+                ) : null}
+                {speechSaveError ? (
+                  <p className="text-xs text-destructive">{speechSaveError}</p>
                 ) : null}
               </div>
             </section>

@@ -31,6 +31,13 @@ import {
 import { KeybindingRule } from "./keybindings";
 import { ProjectSearchEntriesInput, ProjectWriteFileInput } from "./project";
 import { OpenInEditorInput } from "./editor";
+import {
+  SpeechToTextAppendAudioInput,
+  SpeechToTextCancelInput,
+  SpeechToTextStopInput,
+  SpeechToTextStartInput,
+  SpeechToTextUpdateConfigInput,
+} from "./speech";
 
 // ── WebSocket RPC Method Names ───────────────────────────────────────
 
@@ -67,6 +74,14 @@ export const WS_METHODS = {
   // Server meta
   serverGetConfig: "server.getConfig",
   serverUpsertKeybinding: "server.upsertKeybinding",
+
+  // Speech to text
+  speechGetConfig: "speech.getConfig",
+  speechUpdateConfig: "speech.updateConfig",
+  speechStartTranscription: "speech.startTranscription",
+  speechAppendAudio: "speech.appendAudio",
+  speechStopTranscription: "speech.stopTranscription",
+  speechCancelTranscription: "speech.cancelTranscription",
 } as const;
 
 // ── Push Event Channels ──────────────────────────────────────────────
@@ -75,6 +90,8 @@ export const WS_CHANNELS = {
   terminalEvent: "terminal.event",
   serverWelcome: "server.welcome",
   serverConfigUpdated: "server.configUpdated",
+  speechEvent: "speech.event",
+  speechConfigUpdated: "speech.configUpdated",
 } as const;
 
 // -- Tagged Union of all request body schemas ─────────────────────────
@@ -129,6 +146,14 @@ const WebSocketRequestBody = Schema.Union([
   // Server meta
   tagRequestBody(WS_METHODS.serverGetConfig, Schema.Struct({})),
   tagRequestBody(WS_METHODS.serverUpsertKeybinding, KeybindingRule),
+
+  // Speech to text
+  tagRequestBody(WS_METHODS.speechGetConfig, Schema.Struct({})),
+  tagRequestBody(WS_METHODS.speechUpdateConfig, SpeechToTextUpdateConfigInput),
+  tagRequestBody(WS_METHODS.speechStartTranscription, SpeechToTextStartInput),
+  tagRequestBody(WS_METHODS.speechAppendAudio, SpeechToTextAppendAudioInput),
+  tagRequestBody(WS_METHODS.speechStopTranscription, SpeechToTextStopInput),
+  tagRequestBody(WS_METHODS.speechCancelTranscription, SpeechToTextCancelInput),
 ]);
 
 export const WebSocketRequest = Schema.Struct({

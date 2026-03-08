@@ -5,6 +5,8 @@ import {
   type ContextMenuItem,
   type NativeApi,
   ServerConfigUpdatedPayload,
+  SpeechToTextConfigUpdatedPayload,
+  SpeechToTextEvent,
   TerminalEvent,
   WS_CHANNELS,
   WS_METHODS,
@@ -185,6 +187,25 @@ export function createWsNativeApi(): NativeApi {
     server: {
       getConfig: () => transport.request(WS_METHODS.serverGetConfig),
       upsertKeybinding: (input) => transport.request(WS_METHODS.serverUpsertKeybinding, input),
+    },
+    speech: {
+      getConfig: () => transport.request(WS_METHODS.speechGetConfig),
+      updateConfig: (input) => transport.request(WS_METHODS.speechUpdateConfig, input),
+      startTranscription: (input) => transport.request(WS_METHODS.speechStartTranscription, input),
+      appendAudio: (input) => transport.request(WS_METHODS.speechAppendAudio, input),
+      stopTranscription: (input) => transport.request(WS_METHODS.speechStopTranscription, input),
+      cancelTranscription: (input) =>
+        transport.request(WS_METHODS.speechCancelTranscription, input),
+      onEvent: (callback) =>
+        transport.subscribe(WS_CHANNELS.speechEvent, (data) => {
+          const payload = decodeAndWarnOnFailure(SpeechToTextEvent, data);
+          if (payload) callback(payload);
+        }),
+      onConfigUpdated: (callback) =>
+        transport.subscribe(WS_CHANNELS.speechConfigUpdated, (data) => {
+          const payload = decodeAndWarnOnFailure(SpeechToTextConfigUpdatedPayload, data);
+          if (payload) callback(payload);
+        }),
     },
     orchestration: {
       getSnapshot: () => transport.request(ORCHESTRATION_WS_METHODS.getSnapshot),
