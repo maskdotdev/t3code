@@ -15,12 +15,13 @@ import { applyThemeToDocument, createThemeSnapshot } from "./theme";
 const history = isElectron ? createHashHistory() : createBrowserHistory();
 
 const router = getRouter(history);
+const appSettingsSnapshot = getAppSettingsSnapshot();
 
 document.title = APP_DISPLAY_NAME;
 applyThemeToDocument(
   createThemeSnapshot({
-    appearanceMode: getAppSettingsSnapshot().appearanceMode,
-    appearanceTheme: getAppSettingsSnapshot().appearanceTheme,
+    appearanceMode: appSettingsSnapshot.appearanceMode,
+    appearanceTheme: appSettingsSnapshot.appearanceTheme,
   }),
 );
 
