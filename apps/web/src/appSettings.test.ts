@@ -63,7 +63,7 @@ describe("getAppSettingsSnapshot", () => {
         enableAssistantStreaming: false,
         focusMode: true,
         appearanceMode: "dark",
-        appearanceTheme: "navy",
+        appearanceTheme: "graphite",
         codexServiceTier: "auto",
         customCodexModels: [],
       }),
@@ -72,7 +72,7 @@ describe("getAppSettingsSnapshot", () => {
     const snapshot = getAppSettingsSnapshot();
     expect(snapshot.focusMode).toBe(true);
     expect(snapshot.appearanceMode).toBe("dark");
-    expect(snapshot.appearanceTheme).toBe("navy");
+    expect(snapshot.appearanceTheme).toBe("graphite");
   });
 
   it("migrates the legacy theme key when the new appearance mode is missing", () => {

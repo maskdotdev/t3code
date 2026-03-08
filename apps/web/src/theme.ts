@@ -1,5 +1,5 @@
 export const APP_THEME_MODES = ["system", "light", "dark"] as const;
-export const APP_THEME_NAMES = ["default", "graphite", "navy"] as const;
+export const APP_THEME_NAMES = ["default", "graphite"] as const;
 export const DEFAULT_APP_THEME_MODE = "system";
 export const DEFAULT_APP_THEME_NAME = "default";
 export const LEGACY_THEME_STORAGE_KEY = "t3code:theme";
@@ -55,17 +55,6 @@ export const APP_THEME_OPTIONS = [
       accent: "#5169ff",
       highlight: "#88a0ff",
       foreground: "#15213d",
-    },
-  },
-  {
-    value: "navy",
-    label: "Navy",
-    description: "Deep navy blue with warm golden accents.",
-    preview: {
-      background: "linear-gradient(135deg, #060e1e 0%, #0f1f42 48%, #d4a844 100%)",
-      accent: "#d4a844",
-      highlight: "#1a3578",
-      foreground: "#e4eaf4",
     },
   },
 ] as const satisfies ReadonlyArray<{
