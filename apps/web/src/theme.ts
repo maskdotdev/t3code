@@ -1,7 +1,7 @@
 export const APP_THEME_MODES = ["system", "light", "dark"] as const;
-export const APP_THEME_NAMES = ["graphite", "dawn", "canopy", "tide"] as const;
+export const APP_THEME_NAMES = ["default", "graphite", "navy"] as const;
 export const DEFAULT_APP_THEME_MODE = "system";
-export const DEFAULT_APP_THEME_NAME = "graphite";
+export const DEFAULT_APP_THEME_NAME = "default";
 export const LEGACY_THEME_STORAGE_KEY = "t3code:theme";
 const MEDIA_QUERY = "(prefers-color-scheme: dark)";
 
@@ -36,6 +36,17 @@ export const APP_THEME_MODE_OPTIONS = [
 
 export const APP_THEME_OPTIONS = [
   {
+    value: "default",
+    label: "Default",
+    description: "The original neutral palette that shipped before themed surfaces.",
+    preview: {
+      background: "linear-gradient(135deg, #f8f8f9 0%, #e9ebef 52%, #d8dde5 100%)",
+      accent: "#5a57f2",
+      highlight: "#7b86ff",
+      foreground: "#1f2937",
+    },
+  },
+  {
     value: "graphite",
     label: "Graphite",
     description: "Cool slate surfaces with an electric blue core.",
@@ -47,36 +58,14 @@ export const APP_THEME_OPTIONS = [
     },
   },
   {
-    value: "dawn",
-    label: "Dawn",
-    description: "Warm paper tones with terracotta and gold accents.",
+    value: "navy",
+    label: "Navy",
+    description: "Deep navy blue with warm golden accents.",
     preview: {
-      background: "linear-gradient(135deg, #fff1dd 0%, #ffd7c8 52%, #ffc39f 100%)",
-      accent: "#cc6840",
-      highlight: "#efb15b",
-      foreground: "#472218",
-    },
-  },
-  {
-    value: "canopy",
-    label: "Canopy",
-    description: "Botanical greens with a restrained studio feel.",
-    preview: {
-      background: "linear-gradient(135deg, #ecf6df 0%, #d4edd5 48%, #b8ddca 100%)",
-      accent: "#2f7a56",
-      highlight: "#65aa79",
-      foreground: "#173122",
-    },
-  },
-  {
-    value: "tide",
-    label: "Tide",
-    description: "Crisp cyan-blue contrast with a coastal haze.",
-    preview: {
-      background: "linear-gradient(135deg, #e6f6fb 0%, #d6edfa 52%, #bbdbf4 100%)",
-      accent: "#0e7fa6",
-      highlight: "#44a8cf",
-      foreground: "#10293a",
+      background: "linear-gradient(135deg, #060e1e 0%, #0f1f42 48%, #d4a844 100%)",
+      accent: "#d4a844",
+      highlight: "#1a3578",
+      foreground: "#e4eaf4",
     },
   },
 ] as const satisfies ReadonlyArray<{

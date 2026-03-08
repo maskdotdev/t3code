@@ -75,10 +75,21 @@ export function useTheme() {
     },
     systemDark,
   );
+  const mode = themeSettings.appearanceMode;
+  const themeName = themeSettings.appearanceTheme;
+  const resolvedTheme = snapshot.resolvedTheme;
 
   useEffect(() => {
-    applyThemeToDocument(snapshot, true);
-  }, [snapshot.mode, snapshot.resolvedTheme, snapshot.themeName, snapshot.systemDark]);
+    applyThemeToDocument(
+      {
+        mode,
+        themeName,
+        resolvedTheme,
+        systemDark,
+      },
+      true,
+    );
+  }, [mode, resolvedTheme, themeName, systemDark]);
 
   const setMode = useCallback((next: AppThemeMode) => {
     updateAppSettingsSnapshot({ appearanceMode: next });
@@ -89,10 +100,10 @@ export function useTheme() {
   }, []);
 
   return {
-    mode: themeSettings.appearanceMode,
+    mode,
     setMode,
-    themeName: themeSettings.appearanceTheme,
+    themeName,
     setThemeName,
-    resolvedTheme: snapshot.resolvedTheme,
+    resolvedTheme,
   } as const;
 }

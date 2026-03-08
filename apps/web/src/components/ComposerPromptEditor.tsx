@@ -53,6 +53,7 @@ import {
 import { isCollapsedCursorAdjacentToMention } from "~/composer-logic";
 import { splitPromptIntoComposerSegments } from "~/composer-editor-mentions";
 import { cn } from "~/lib/utils";
+import { getResolvedThemeFromDocument } from "~/theme";
 import { basenameOfPath, getVscodeIconUrlForEntry } from "~/vscode-icons";
 
 const COMPOSER_EDITOR_HMR_KEY = `composer-editor-${Math.random().toString(36).slice(2)}`;
@@ -150,16 +151,12 @@ function inferMentionPathKind(pathValue: string): "file" | "directory" {
   return "directory";
 }
 
-function resolvedThemeFromDocument(): "light" | "dark" {
-  return document.documentElement.classList.contains("dark") ? "dark" : "light";
-}
-
 function renderMentionChipDom(container: HTMLElement, pathValue: string): void {
   container.textContent = "";
   container.style.setProperty("user-select", "none");
   container.style.setProperty("-webkit-user-select", "none");
 
-  const theme = resolvedThemeFromDocument();
+  const theme = getResolvedThemeFromDocument();
   const icon = document.createElement("img");
   icon.alt = "";
   icon.ariaHidden = "true";

@@ -17,6 +17,7 @@ import { serverConfigQueryOptions } from "../lib/serverReactQuery";
 import { speechConfigQueryOptions, speechQueryKeys } from "../lib/speechReactQuery";
 import { ensureNativeApi } from "../nativeApi";
 import { preferredTerminalEditor } from "../terminal-links";
+import { APP_THEME_MODE_OPTIONS, APP_THEME_OPTIONS } from "../theme";
 import { Button } from "../components/ui/button";
 import { Input } from "../components/ui/input";
 import { InputGroup, InputGroupAddon, InputGroupInput } from "../components/ui/input-group";
@@ -57,24 +58,6 @@ const SPEECH_PROVIDER_OPTIONS: Array<{
   { value: "elevenlabs", label: "ElevenLabs" },
   { value: "gemini", label: "Gemini" },
 ];
-
-const THEME_OPTIONS = [
-  {
-    value: "system",
-    label: "System",
-    description: "Match your OS appearance setting.",
-  },
-  {
-    value: "light",
-    label: "Light",
-    description: "Always use the light theme.",
-  },
-  {
-    value: "dark",
-    label: "Dark",
-    description: "Always use the dark theme.",
-  },
-] as const;
 
 const MODEL_PROVIDER_SETTINGS: Array<{
   provider: ProviderKind;
@@ -163,7 +146,7 @@ function SecretInput(props: SecretInputProps) {
 
 function SettingsRouteView() {
   const queryClient = useQueryClient();
-  const { theme, setTheme, resolvedTheme } = useTheme();
+  const { mode, setMode, themeName, setThemeName } = useTheme();
   const { settings, defaults, updateSettings } = useAppSettings();
   const serverConfigQuery = useQuery(serverConfigQueryOptions());
   const speechConfigQuery = useQuery(speechConfigQueryOptions());
@@ -348,51 +331,93 @@ function SettingsRouteView() {
               <div className="mb-4">
                 <h2 className="text-sm font-medium text-foreground">Appearance</h2>
                 <p className="mt-1 text-xs text-muted-foreground">
-                  Choose how T3 Code handles light and dark mode.
+                  Pick a palette, then decide whether it follows the system, light, or dark mode.
                 </p>
               </div>
 
-              <div className="space-y-2" role="radiogroup" aria-label="Theme preference">
-                {THEME_OPTIONS.map((option) => {
-                  const selected = theme === option.value;
+              <div
+                className="grid grid-cols-2 gap-2 sm:grid-cols-4"
+                role="radiogroup"
+                aria-label="Theme palette"
+              >
+                {APP_THEME_OPTIONS.map((option) => {
+                  const selected = themeName === option.value;
                   return (
                     <button
                       key={option.value}
                       type="button"
                       role="radio"
                       aria-checked={selected}
-                      className={`flex w-full items-start justify-between rounded-lg border px-3 py-2 text-left transition-colors ${
+                      className={`group flex flex-col overflow-hidden rounded-lg border transition-all ${
                         selected
-                          ? "border-primary/60 bg-primary/8 text-foreground"
-                          : "border-border bg-background text-muted-foreground hover:bg-accent"
+                          ? "border-primary/60 ring-1 ring-primary/30"
+                          : "border-border hover:border-border/80"
                       }`}
-                      onClick={() => setTheme(option.value)}
+                      onClick={() => setThemeName(option.value)}
                     >
-                      <span className="flex flex-col">
-                        <span className="text-sm font-medium">{option.label}</span>
-                        <span className="text-xs">{option.description}</span>
-                      </span>
-                      {selected ? (
-                        <span className="rounded bg-primary/14 px-1.5 py-0.5 text-[10px] font-medium uppercase tracking-wide text-primary">
-                          Selected
+                      <span
+                        className="block h-8 w-full"
+                        aria-hidden="true"
+                        style={{ background: option.preview.background }}
+                      >
+                        <span className="flex h-full items-center justify-end gap-1 px-2">
+                          <span
+                            className="size-2 rounded-full ring-1 ring-black/10"
+                            style={{ backgroundColor: option.preview.accent }}
+                          />
+                          <span
+                            className="size-2 rounded-full ring-1 ring-black/10"
+                            style={{ backgroundColor: option.preview.highlight }}
+                          />
+                          <span
+                            className="size-2 rounded-full ring-1 ring-black/10"
+                            style={{ backgroundColor: option.preview.foreground }}
+                          />
                         </span>
-                      ) : null}
+                      </span>
+                      <span className="flex items-center justify-between px-2 py-1.5">
+                        <span className="text-xs font-medium text-foreground">{option.label}</span>
+                        {selected ? (
+                          <span className="size-1.5 rounded-full bg-primary" />
+                        ) : null}
+                      </span>
                     </button>
                   );
                 })}
               </div>
 
-              <p className="mt-4 text-xs text-muted-foreground">
-                Active theme: <span className="font-medium text-foreground">{resolvedTheme}</span>
-              </p>
+              <div
+                className="mt-3 inline-flex rounded-lg border border-border bg-background p-0.5"
+                role="radiogroup"
+                aria-label="Theme mode"
+              >
+                {APP_THEME_MODE_OPTIONS.map((option) => {
+                  const selected = mode === option.value;
+                  return (
+                    <button
+                      key={option.value}
+                      type="button"
+                      role="radio"
+                      aria-checked={selected}
+                      className={`rounded-md px-3 py-1 text-xs font-medium transition-colors ${
+                        selected
+                          ? "bg-primary/12 text-foreground"
+                          : "text-muted-foreground hover:text-foreground"
+                      }`}
+                      onClick={() => setMode(option.value)}
+                    >
+                      {option.label}
+                    </button>
+                  );
+                })}
+              </div>
 
-              <div className="mt-5 flex items-start justify-between gap-4 rounded-xl border border-border/70 bg-background/65 px-4 py-3">
-                <div className="space-y-1">
-                  <div className="text-sm font-medium text-foreground">Focus mode</div>
-                  <p className="text-xs text-muted-foreground">
-                    Hide the thread sidebar, diff panel, terminal drawer, branch bar, and project
-                    actions until you turn it off.
-                  </p>
+              <div className="mt-3 flex items-center justify-between gap-4 rounded-lg border border-border/70 bg-background/65 px-3 py-2">
+                <div>
+                  <span className="text-xs font-medium text-foreground">Focus mode</span>
+                  <span className="ml-2 text-xs text-muted-foreground">
+                    Hide sidebar, diff panel, terminal, branch bar, and project actions.
+                  </span>
                 </div>
                 <Switch
                   checked={settings.focusMode}

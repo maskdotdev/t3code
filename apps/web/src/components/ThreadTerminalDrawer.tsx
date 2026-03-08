@@ -19,6 +19,7 @@ import {
   resolvePathLinkTarget,
 } from "../terminal-links";
 import { isTerminalClearShortcut, terminalNavigationShortcutData } from "../keybindings";
+import { getResolvedThemeFromDocument, readThemeCssVariable } from "../theme";
 import {
   DEFAULT_THREAD_TERMINAL_HEIGHT,
   DEFAULT_THREAD_TERMINAL_ID,
@@ -46,64 +47,84 @@ function writeSystemMessage(terminal: Terminal, message: string): void {
 }
 
 function terminalThemeFromApp(): ITheme {
-  const isDark = document.documentElement.classList.contains("dark");
+  const isDark = getResolvedThemeFromDocument() === "dark";
   const bodyStyles = getComputedStyle(document.body);
   const background =
     bodyStyles.backgroundColor || (isDark ? "rgb(14, 18, 24)" : "rgb(255, 255, 255)");
   const foreground = bodyStyles.color || (isDark ? "rgb(237, 241, 247)" : "rgb(28, 33, 41)");
 
-  if (isDark) {
-    return {
-      background,
-      foreground,
-      cursor: "rgb(180, 203, 255)",
-      selectionBackground: "rgba(180, 203, 255, 0.25)",
-      scrollbarSliderBackground: "rgba(255, 255, 255, 0.1)",
-      scrollbarSliderHoverBackground: "rgba(255, 255, 255, 0.18)",
-      scrollbarSliderActiveBackground: "rgba(255, 255, 255, 0.22)",
-      black: "rgb(24, 30, 38)",
-      red: "rgb(255, 122, 142)",
-      green: "rgb(134, 231, 149)",
-      yellow: "rgb(244, 205, 114)",
-      blue: "rgb(137, 190, 255)",
-      magenta: "rgb(208, 176, 255)",
-      cyan: "rgb(124, 232, 237)",
-      white: "rgb(210, 218, 230)",
-      brightBlack: "rgb(110, 120, 136)",
-      brightRed: "rgb(255, 168, 180)",
-      brightGreen: "rgb(176, 245, 186)",
-      brightYellow: "rgb(255, 224, 149)",
-      brightBlue: "rgb(174, 210, 255)",
-      brightMagenta: "rgb(229, 203, 255)",
-      brightCyan: "rgb(167, 244, 247)",
-      brightWhite: "rgb(244, 247, 252)",
-    };
-  }
-
   return {
     background,
     foreground,
-    cursor: "rgb(38, 56, 78)",
-    selectionBackground: "rgba(37, 63, 99, 0.2)",
-    scrollbarSliderBackground: "rgba(0, 0, 0, 0.15)",
-    scrollbarSliderHoverBackground: "rgba(0, 0, 0, 0.25)",
-    scrollbarSliderActiveBackground: "rgba(0, 0, 0, 0.3)",
-    black: "rgb(44, 53, 66)",
-    red: "rgb(191, 70, 87)",
-    green: "rgb(60, 126, 86)",
-    yellow: "rgb(146, 112, 35)",
-    blue: "rgb(72, 102, 163)",
-    magenta: "rgb(132, 86, 149)",
-    cyan: "rgb(53, 127, 141)",
-    white: "rgb(210, 215, 223)",
-    brightBlack: "rgb(112, 123, 140)",
-    brightRed: "rgb(212, 95, 112)",
-    brightGreen: "rgb(85, 148, 111)",
-    brightYellow: "rgb(173, 133, 45)",
-    brightBlue: "rgb(91, 124, 194)",
-    brightMagenta: "rgb(153, 107, 172)",
-    brightCyan: "rgb(70, 149, 164)",
-    brightWhite: "rgb(236, 240, 246)",
+    cursor: readThemeCssVariable(
+      "--terminal-cursor",
+      isDark ? "rgb(180, 203, 255)" : "rgb(38, 56, 78)",
+    ),
+    selectionBackground: readThemeCssVariable(
+      "--terminal-selection",
+      isDark ? "rgba(180, 203, 255, 0.25)" : "rgba(37, 63, 99, 0.2)",
+    ),
+    scrollbarSliderBackground: readThemeCssVariable(
+      "--terminal-scrollbar-thumb",
+      isDark ? "rgba(255, 255, 255, 0.1)" : "rgba(0, 0, 0, 0.15)",
+    ),
+    scrollbarSliderHoverBackground: readThemeCssVariable(
+      "--terminal-scrollbar-thumb-hover",
+      isDark ? "rgba(255, 255, 255, 0.18)" : "rgba(0, 0, 0, 0.25)",
+    ),
+    scrollbarSliderActiveBackground: readThemeCssVariable(
+      "--terminal-scrollbar-thumb-active",
+      isDark ? "rgba(255, 255, 255, 0.22)" : "rgba(0, 0, 0, 0.3)",
+    ),
+    black: readThemeCssVariable("--terminal-black", isDark ? "rgb(24, 30, 38)" : "rgb(44, 53, 66)"),
+    red: readThemeCssVariable("--terminal-red", isDark ? "rgb(255, 122, 142)" : "rgb(191, 70, 87)"),
+    green: readThemeCssVariable(
+      "--terminal-green",
+      isDark ? "rgb(134, 231, 149)" : "rgb(60, 126, 86)",
+    ),
+    yellow: readThemeCssVariable(
+      "--terminal-yellow",
+      isDark ? "rgb(244, 205, 114)" : "rgb(146, 112, 35)",
+    ),
+    blue: readThemeCssVariable("--terminal-blue", isDark ? "rgb(137, 190, 255)" : "rgb(72, 102, 163)"),
+    magenta: readThemeCssVariable(
+      "--terminal-magenta",
+      isDark ? "rgb(208, 176, 255)" : "rgb(132, 86, 149)",
+    ),
+    cyan: readThemeCssVariable("--terminal-cyan", isDark ? "rgb(124, 232, 237)" : "rgb(53, 127, 141)"),
+    white: readThemeCssVariable("--terminal-white", isDark ? "rgb(210, 218, 230)" : "rgb(210, 215, 223)"),
+    brightBlack: readThemeCssVariable(
+      "--terminal-bright-black",
+      isDark ? "rgb(110, 120, 136)" : "rgb(112, 123, 140)",
+    ),
+    brightRed: readThemeCssVariable(
+      "--terminal-bright-red",
+      isDark ? "rgb(255, 168, 180)" : "rgb(212, 95, 112)",
+    ),
+    brightGreen: readThemeCssVariable(
+      "--terminal-bright-green",
+      isDark ? "rgb(176, 245, 186)" : "rgb(85, 148, 111)",
+    ),
+    brightYellow: readThemeCssVariable(
+      "--terminal-bright-yellow",
+      isDark ? "rgb(255, 224, 149)" : "rgb(173, 133, 45)",
+    ),
+    brightBlue: readThemeCssVariable(
+      "--terminal-bright-blue",
+      isDark ? "rgb(174, 210, 255)" : "rgb(91, 124, 194)",
+    ),
+    brightMagenta: readThemeCssVariable(
+      "--terminal-bright-magenta",
+      isDark ? "rgb(229, 203, 255)" : "rgb(153, 107, 172)",
+    ),
+    brightCyan: readThemeCssVariable(
+      "--terminal-bright-cyan",
+      isDark ? "rgb(167, 244, 247)" : "rgb(70, 149, 164)",
+    ),
+    brightWhite: readThemeCssVariable(
+      "--terminal-bright-white",
+      isDark ? "rgb(244, 247, 252)" : "rgb(236, 240, 246)",
+    ),
   };
 }
 
