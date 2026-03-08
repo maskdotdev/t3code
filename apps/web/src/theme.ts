@@ -1,5 +1,5 @@
 export const APP_THEME_MODES = ["system", "light", "dark"] as const;
-export const APP_THEME_NAMES = ["default", "graphite"] as const;
+export const APP_THEME_NAMES = ["default", "rose", "navy"] as const;
 export const DEFAULT_APP_THEME_MODE = "system";
 export const DEFAULT_APP_THEME_NAME = "default";
 export const LEGACY_THEME_STORAGE_KEY = "t3code:theme";
@@ -47,14 +47,25 @@ export const APP_THEME_OPTIONS = [
     },
   },
   {
-    value: "graphite",
-    label: "Graphite",
-    description: "Cool slate surfaces with an electric blue core.",
+    value: "rose",
+    label: "Rosé",
+    description: "Dusty rose and warm mauve with refined grays.",
     preview: {
-      background: "linear-gradient(135deg, #eff5ff 0%, #d7e4ff 46%, #c7d5ff 100%)",
-      accent: "#5169ff",
-      highlight: "#88a0ff",
-      foreground: "#15213d",
+      background: "linear-gradient(135deg, #f9f2f4 0%, #e8d0d8 46%, #c49aaa 100%)",
+      accent: "#b5647a",
+      highlight: "#d4a0b0",
+      foreground: "#2e1f26",
+    },
+  },
+  {
+    value: "navy",
+    label: "Navy",
+    description: "Deep navy blue with warm golden accents.",
+    preview: {
+      background: "linear-gradient(135deg, #060e1e 0%, #0f1f42 48%, #d4a844 100%)",
+      accent: "#d4a844",
+      highlight: "#1a3578",
+      foreground: "#e4eaf4",
     },
   },
 ] as const satisfies ReadonlyArray<{
