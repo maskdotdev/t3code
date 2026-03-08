@@ -59,7 +59,7 @@ describe("resolveModelSlug", () => {
 
 describe("getReasoningEffortOptions", () => {
   it("returns codex reasoning options for codex", () => {
-    expect(getReasoningEffortOptions("codex")).toEqual(["xhigh", "high", "medium", "low"]);
+    expect(getReasoningEffortOptions("codex")).toEqual(["low", "medium", "high", "xhigh"]);
   });
 });
 
@@ -71,14 +71,14 @@ describe("getDefaultReasoningEffort", () => {
 
 describe("cycleReasoningEffort", () => {
   it("cycles through codex reasoning efforts in configured order", () => {
-    expect(cycleReasoningEffort("xhigh", "codex")).toBe("high");
-    expect(cycleReasoningEffort("high", "codex")).toBe("medium");
-    expect(cycleReasoningEffort("medium", "codex")).toBe("low");
-    expect(cycleReasoningEffort("low", "codex")).toBe("xhigh");
+    expect(cycleReasoningEffort("low", "codex")).toBe("medium");
+    expect(cycleReasoningEffort("medium", "codex")).toBe("high");
+    expect(cycleReasoningEffort("high", "codex")).toBe("xhigh");
+    expect(cycleReasoningEffort("xhigh", "codex")).toBe("low");
   });
 
   it("falls back to the provider default when the current value is missing", () => {
-    expect(cycleReasoningEffort(null, "codex")).toBe("medium");
-    expect(cycleReasoningEffort(undefined, "codex")).toBe("medium");
+    expect(cycleReasoningEffort(null, "codex")).toBe("xhigh");
+    expect(cycleReasoningEffort(undefined, "codex")).toBe("xhigh");
   });
 });

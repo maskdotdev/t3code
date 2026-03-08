@@ -1,7 +1,7 @@
 import { Schema } from "effect";
 import { ProviderKind } from "./orchestration";
 
-export const CODEX_REASONING_EFFORT_OPTIONS = ["xhigh", "high", "medium", "low"] as const;
+export const CODEX_REASONING_EFFORT_OPTIONS = ["low", "medium", "high", "xhigh"] as const;
 export type CodexReasoningEffort = (typeof CODEX_REASONING_EFFORT_OPTIONS)[number];
 
 export const CodexModelOptions = Schema.Struct({

@@ -3740,57 +3740,53 @@ export default function ChatView({ threadId }: ChatViewProps) {
                       </>
                     ) : null}
 
-                    <Separator orientation="vertical" className="mx-0.5 hidden h-4 sm:block" />
-
-                    <Button
-                      variant="ghost"
-                      className={cn(
-                        "shrink-0 whitespace-nowrap px-2 sm:justify-center sm:px-3",
-                        isPlanMode
-                          ? "text-orange-500 hover:text-orange-600 dark:text-orange-300/90 dark:hover:text-orange-200"
-                          : "text-muted-foreground/70 hover:text-foreground/80",
-                      )}
-                      size="sm"
-                      type="button"
-                      onClick={toggleInteractionMode}
-                      title={
-                        interactionMode === "plan"
-                          ? "Plan mode — click to return to normal chat mode"
-                          : "Default mode — click to enter plan mode"
-                      }
-                    >
-                      <BotIcon />
-                      <span>Plan</span>
-                    </Button>
+                    {isPlanMode ? (
+                      <>
+                        <Separator orientation="vertical" className="mx-0.5 hidden h-4 sm:block" />
+                        <Button
+                          variant="ghost"
+                          className="shrink-0 whitespace-nowrap px-2 text-orange-500 hover:text-orange-600 sm:justify-center sm:px-3 dark:text-orange-300/90 dark:hover:text-orange-200"
+                          size="sm"
+                          type="button"
+                          onClick={toggleInteractionMode}
+                          title="Plan mode — click to return to normal chat mode"
+                        >
+                          <BotIcon />
+                          <span>Plan</span>
+                        </Button>
+                      </>
+                    ) : null}
                   </div>
                 )}
 
                 {/* Right side: send / stop button */}
                 <div className="flex shrink-0 items-center gap-2">
+                  {isSpeechBusy ? null : (
+                    <Button
+                      variant="ghost"
+                      className="shrink-0 whitespace-nowrap px-2 text-muted-foreground/70 hover:text-foreground/80 sm:px-3"
+                      size="sm"
+                      type="button"
+                      onClick={() =>
+                        void handleRuntimeModeChange(
+                          runtimeMode === "full-access" ? "approval-required" : "full-access",
+                        )
+                      }
+                      title={
+                        runtimeMode === "full-access"
+                          ? "Full access — click to require approvals"
+                          : "Approval required — click for full access"
+                      }
+                    >
+                      {runtimeMode === "full-access" ? <LockOpenIcon /> : <LockIcon />}
+                      <span className="sr-only sm:not-sr-only">
+                        {runtimeMode === "full-access" ? "Full access" : "Supervised"}
+                      </span>
+                    </Button>
+                  )}
                   {pendingUserInputs.length === 0 ? (
                     <ComposerSpeechToTextControl speech={speech} />
                   ) : null}
-                  <Button
-                    variant="ghost"
-                    className="shrink-0 whitespace-nowrap px-2 text-muted-foreground/70 hover:text-foreground/80 sm:px-3"
-                    size="sm"
-                    type="button"
-                    onClick={() =>
-                      void handleRuntimeModeChange(
-                        runtimeMode === "full-access" ? "approval-required" : "full-access",
-                      )
-                    }
-                    title={
-                      runtimeMode === "full-access"
-                        ? "Full access — click to require approvals"
-                        : "Approval required — click for full access"
-                    }
-                  >
-                    {runtimeMode === "full-access" ? <LockOpenIcon /> : <LockIcon />}
-                    <span className="sr-only sm:not-sr-only">
-                      {runtimeMode === "full-access" ? "Full access" : "Supervised"}
-                    </span>
-                  </Button>
                   {isPreparingWorktree ? (
                     <span className="text-muted-foreground/70 text-xs">Preparing worktree...</span>
                   ) : null}
