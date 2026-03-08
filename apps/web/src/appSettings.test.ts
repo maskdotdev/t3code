@@ -46,6 +46,13 @@ describe("getAppSettingsSnapshot", () => {
     expect(getAppSettingsSnapshot().focusMode).toBe(false);
   });
 
+  it("defaults appearance settings when nothing is persisted", () => {
+    const snapshot = getAppSettingsSnapshot();
+
+    expect(snapshot.appearanceMode).toBe("system");
+    expect(snapshot.appearanceTheme).toBe("default");
+  });
+
   it("reads persisted focus mode", () => {
     localStorage.setItem(
       "t3code:app-settings:v1",
@@ -55,12 +62,35 @@ describe("getAppSettingsSnapshot", () => {
         confirmThreadDelete: true,
         enableAssistantStreaming: false,
         focusMode: true,
+        appearanceMode: "dark",
+        appearanceTheme: "graphite",
         codexServiceTier: "auto",
         customCodexModels: [],
       }),
     );
 
-    expect(getAppSettingsSnapshot().focusMode).toBe(true);
+    const snapshot = getAppSettingsSnapshot();
+    expect(snapshot.focusMode).toBe(true);
+    expect(snapshot.appearanceMode).toBe("dark");
+    expect(snapshot.appearanceTheme).toBe("graphite");
+  });
+
+  it("migrates the legacy theme key when the new appearance mode is missing", () => {
+    localStorage.setItem("t3code:theme", "dark");
+    localStorage.setItem(
+      "t3code:app-settings:v1",
+      JSON.stringify({
+        codexBinaryPath: "",
+        codexHomePath: "",
+        confirmThreadDelete: true,
+        enableAssistantStreaming: false,
+        focusMode: false,
+        codexServiceTier: "auto",
+        customCodexModels: [],
+      }),
+    );
+
+    expect(getAppSettingsSnapshot().appearanceMode).toBe("dark");
   });
 });
 

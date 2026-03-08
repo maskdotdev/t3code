@@ -11,7 +11,6 @@ import {
   isAppThemeName,
   LEGACY_THEME_STORAGE_KEY,
   type AppThemeMode,
-  type AppThemeName,
 } from "./theme";
 
 const APP_SETTINGS_STORAGE_KEY = "t3code:app-settings:v1";
