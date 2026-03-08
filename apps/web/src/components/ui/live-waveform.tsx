@@ -36,7 +36,7 @@ export function LiveWaveform(props: LiveWaveformProps) {
   return (
     <div
       className={cn(
-        "relative flex h-10 items-end gap-px overflow-hidden rounded-xl px-1.5 py-1.5",
+        "relative flex h-8 items-center gap-[3px] overflow-hidden rounded-xl px-1",
         props.className,
       )}
       aria-hidden="true"
@@ -45,12 +45,12 @@ export function LiveWaveform(props: LiveWaveformProps) {
         const value = bar.value;
         const normalized = Math.max(props.active ? 0.04 : 0.02, Math.min(1, value));
         const shaped = Math.pow(normalized, 0.6);
-        const heightPercent = 12 + shaped * 88;
+        const heightPercent = 15 + shaped * 85;
         const barOpacity = props.active ? 0.35 + shaped * 0.65 : 0.15 + shaped * 0.2;
         return (
           <span
             key={bar.key}
-            className="relative z-10 block w-[3px] shrink-0 grow rounded-full bg-white transition-[height,opacity] duration-100 ease-out"
+            className="relative z-10 block w-1 shrink-0 grow rounded-[2px] bg-white transition-[height,opacity] duration-100 ease-out"
             style={{
               height: `${heightPercent}%`,
               opacity: barOpacity,

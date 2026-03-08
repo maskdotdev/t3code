@@ -74,7 +74,7 @@ export function ComposerSpeechToTextStatus(props: ComposerSpeechToTextStatusProp
     : "Dictation";
 
   return (
-    <div className="relative flex min-w-0 flex-1 items-center gap-2 rounded-2xl border border-white/[0.06] bg-white/[0.03] px-2.5 py-1.5 shadow-[inset_0_1px_0_rgba(255,255,255,0.04)]">
+    <div className="relative flex min-w-0 flex-1 items-center gap-2.5 px-2 py-1.5">
 
       {/* Status badge */}
       <div className="relative z-10 inline-flex shrink-0 items-center gap-2 rounded-lg border border-white/[0.06] bg-white/[0.03] px-2.5 py-1.5">
@@ -104,28 +104,30 @@ export function ComposerSpeechToTextStatus(props: ComposerSpeechToTextStatusProp
         data={props.speech.waveformLevels}
       />
 
-      {/* Timer */}
-      <div className="relative z-10 inline-flex shrink-0 items-center rounded-lg border border-white/[0.06] bg-white/[0.03] px-2 py-1">
-        <span className="font-mono text-[11px] tabular-nums text-muted-foreground/80">
-          {isRecording ? formatElapsed(props.speech.elapsedMs) : "…"}
-        </span>
-      </div>
+      {/* Timer + Stop grouped together */}
+      <div className="relative z-10 flex shrink-0 items-center gap-1.5">
+        <div className="inline-flex items-center rounded-lg border border-white/[0.06] bg-white/[0.03] px-2 py-1">
+          <span className="font-mono text-[11px] tabular-nums text-muted-foreground/80">
+            {isRecording ? formatElapsed(props.speech.elapsedMs) : "…"}
+          </span>
+        </div>
 
-      {/* Stop button */}
-      <button
-        type="button"
-        className={cn(
-          "relative z-10 inline-flex size-7 shrink-0 items-center justify-center rounded-lg border transition-colors",
-          isStopping
-            ? "cursor-not-allowed border-white/[0.06] bg-white/[0.03] text-muted-foreground/50"
-            : "border-rose-500/30 bg-rose-500/10 text-rose-400 hover:border-rose-500/50 hover:bg-rose-500/20 hover:text-rose-300",
-        )}
-        disabled={isStopping}
-        aria-label="Stop dictation"
-        onClick={() => void props.speech.stopRecording()}
-      >
-        <SquareIcon className="size-3 fill-current" />
-      </button>
+        {/* Stop button */}
+        <button
+          type="button"
+          className={cn(
+            "inline-flex size-7 shrink-0 items-center justify-center rounded-lg border transition-colors",
+            isStopping
+              ? "cursor-not-allowed border-white/[0.06] bg-white/[0.03] text-muted-foreground/50"
+              : "border-rose-500/30 bg-rose-500/10 text-rose-400 hover:border-rose-500/50 hover:bg-rose-500/20 hover:text-rose-300",
+          )}
+          disabled={isStopping}
+          aria-label="Stop dictation"
+          onClick={() => void props.speech.stopRecording()}
+        >
+          <SquareIcon className="size-3 fill-current" />
+        </button>
+      </div>
     </div>
   );
 }
