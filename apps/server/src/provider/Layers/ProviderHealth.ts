@@ -13,10 +13,11 @@ import type {
   ServerProviderStatus,
   ServerProviderStatusState,
 } from "@t3tools/contracts";
-import { Effect, Layer, Option, Result, Stream } from "effect";
+import { Effect, Layer, Option, Ref, Result, Stream } from "effect";
 import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
 
 import { ProviderHealth, type ProviderHealthShape } from "../Services/ProviderHealth";
+import { readCodexRateLimitsSnapshot } from "../codexRateLimitsProbe";
 
 const DEFAULT_TIMEOUT_MS = 4_000;
 const CODEX_PROVIDER = "codex" as const;
@@ -296,8 +297,30 @@ export const ProviderHealthLive = Layer.effect(
   ProviderHealth,
   Effect.gen(function* () {
     const codexStatus = yield* checkCodexProviderStatus;
+    const codexRateLimitsRef = yield* Ref.make<unknown | null | undefined>(undefined);
+
+    const getCodexRateLimits: Effect.Effect<unknown | null> = Effect.gen(function* () {
+      const cached = yield* Ref.get(codexRateLimitsRef);
+      if (cached !== undefined) {
+        return cached;
+      }
+      if (!codexStatus.available || codexStatus.authStatus === "unauthenticated") {
+        yield* Ref.set(codexRateLimitsRef, null);
+        return null;
+      }
+
+      const rateLimits = yield* Effect.promise(() =>
+        readCodexRateLimitsSnapshot().catch(() => null),
+      );
+
+      yield* Ref.set(codexRateLimitsRef, rateLimits);
+      return rateLimits;
+    });
+
     return {
       getStatuses: Effect.succeed([codexStatus]),
+      getRateLimits: (provider) =>
+        provider === CODEX_PROVIDER ? getCodexRateLimits : Effect.succeed(null),
     } satisfies ProviderHealthShape;
   }),
 );

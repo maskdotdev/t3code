@@ -234,6 +234,20 @@ class RouteRequestError extends Schema.TaggedErrorClass<RouteRequestError>()("Ro
   message: Schema.String,
 }) {}
 
+function withProviderRuntimeSnapshots(
+  providerStatuses: ReadonlyArray<{
+    readonly provider: string;
+  }>,
+  rateLimitsByProvider: Partial<Record<string, unknown>>,
+) {
+  return providerStatuses.map((status) => ({
+    ...status,
+    ...(status.provider in rateLimitsByProvider
+      ? { rateLimits: rateLimitsByProvider[status.provider] }
+      : {}),
+  }));
+}
+
 export const createServer = Effect.fn(function* (): Effect.fn.Return<
   http.Server,
   ServerLifecycleError,
@@ -257,6 +271,7 @@ export const createServer = Effect.fn(function* (): Effect.fn.Return<
   const terminalManager = yield* TerminalManager;
   const keybindingsManager = yield* Keybindings;
   const speechToTextService = yield* SpeechToTextService;
+  const providerService = yield* ProviderService;
   const providerHealth = yield* ProviderHealth;
   const git = yield* GitCore;
   const fileSystem = yield* FileSystem.FileSystem;
@@ -273,6 +288,7 @@ export const createServer = Effect.fn(function* (): Effect.fn.Return<
   );
 
   const providerStatuses = yield* providerHealth.getStatuses;
+  const providerRateLimitsByProvider = yield* Ref.make<Partial<Record<string, unknown>>>({});
 
   const clients = yield* Ref.make(new Set<WebSocket>());
   const logger = createLogger("ws");
@@ -639,14 +655,18 @@ export const createServer = Effect.fn(function* (): Effect.fn.Return<
   ).pipe(Effect.forkIn(subscriptionsScope));
 
   yield* Stream.runForEach(keybindingsManager.changes, (event) =>
-    broadcastPush({
-      type: "push",
-      channel: WS_CHANNELS.serverConfigUpdated,
-      data: {
-        issues: event.issues,
-        providers: providerStatuses,
-      },
-    }),
+    Ref.get(providerRateLimitsByProvider).pipe(
+      Effect.flatMap((rateLimitsSnapshot) =>
+        broadcastPush({
+          type: "push",
+          channel: WS_CHANNELS.serverConfigUpdated,
+          data: {
+            issues: event.issues,
+            providers: withProviderRuntimeSnapshots(providerStatuses, rateLimitsSnapshot),
+          },
+        }),
+      ),
+    ),
   ).pipe(Effect.forkIn(subscriptionsScope));
 
   yield* Stream.runForEach(speechToTextService.streamConfigChanges, (event) =>
@@ -654,6 +674,32 @@ export const createServer = Effect.fn(function* (): Effect.fn.Return<
       type: "push",
       channel: WS_CHANNELS.speechConfigUpdated,
       data: event,
+    }),
+  ).pipe(Effect.forkIn(subscriptionsScope));
+
+  yield* Stream.runForEach(providerService.streamEvents, (event) =>
+    Effect.gen(function* () {
+      if (event.type === "account.rate-limits.updated") {
+        const nextRateLimitsSnapshot = yield* Ref.updateAndGet(providerRateLimitsByProvider, (current) => ({
+          ...current,
+          [event.provider]: event.payload.rateLimits,
+        }));
+
+        yield* broadcastPush({
+          type: "push",
+          channel: WS_CHANNELS.serverConfigUpdated,
+          data: {
+            issues: [],
+            providers: withProviderRuntimeSnapshots(providerStatuses, nextRateLimitsSnapshot),
+          },
+        });
+      }
+
+      yield* broadcastPush({
+        type: "push",
+        channel: WS_CHANNELS.providerEvent,
+        data: event,
+      });
     }),
   ).pipe(Effect.forkIn(subscriptionsScope));
 
@@ -902,12 +948,22 @@ export const createServer = Effect.fn(function* (): Effect.fn.Return<
 
       case WS_METHODS.serverGetConfig:
         const keybindingsConfig = yield* keybindingsManager.loadConfigState;
+        let rateLimitsSnapshot = yield* Ref.get(providerRateLimitsByProvider);
+        if (rateLimitsSnapshot.codex === undefined) {
+          const codexRateLimits = yield* providerHealth.getRateLimits("codex");
+          if (codexRateLimits !== null) {
+            rateLimitsSnapshot = yield* Ref.updateAndGet(providerRateLimitsByProvider, (current) => ({
+              ...current,
+              ...(current.codex === undefined ? { codex: codexRateLimits } : {}),
+            }));
+          }
+        }
         return {
           cwd,
           keybindingsConfigPath,
           keybindings: keybindingsConfig.keybindings,
           issues: keybindingsConfig.issues,
-          providers: providerStatuses,
+          providers: withProviderRuntimeSnapshots(providerStatuses, rateLimitsSnapshot),
           availableEditors,
         };
 

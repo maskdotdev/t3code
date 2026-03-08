@@ -4,6 +4,7 @@ import {
   ORCHESTRATION_WS_METHODS,
   type ContextMenuItem,
   type NativeApi,
+  ProviderRuntimeEvent,
   ServerConfigUpdatedPayload,
   SpeechToTextConfigUpdatedPayload,
   SpeechToTextEvent,
@@ -144,6 +145,13 @@ export function createWsNativeApi(): NativeApi {
     projects: {
       searchEntries: (input) => transport.request(WS_METHODS.projectsSearchEntries, input),
       writeFile: (input) => transport.request(WS_METHODS.projectsWriteFile, input),
+    },
+    providers: {
+      onEvent: (callback) =>
+        transport.subscribe(WS_CHANNELS.providerEvent, (data) => {
+          const payload = decodeAndWarnOnFailure(ProviderRuntimeEvent, data);
+          if (payload) callback(payload);
+        }),
     },
     shell: {
       openInEditor: (cwd, editor) =>

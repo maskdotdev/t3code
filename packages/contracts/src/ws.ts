@@ -88,6 +88,7 @@ export const WS_METHODS = {
 
 export const WS_CHANNELS = {
   terminalEvent: "terminal.event",
+  providerEvent: "provider.event",
   serverWelcome: "server.welcome",
   serverConfigUpdated: "server.configUpdated",
   speechEvent: "speech.event",

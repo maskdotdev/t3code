@@ -571,22 +571,24 @@ export class CodexAppServerManager extends EventEmitter<CodexAppServerManagerEve
 
       this.writeMessage(context, { method: "initialized" });
       try {
-        const modelListResponse = await this.sendRequest(context, "model/list", {});
-        console.log("codex model/list response", modelListResponse);
-      } catch (error) {
-        console.log("codex model/list failed", error);
+        const accountReadResponse = await this.sendRequest(context, "account/read", {});
+        context.account = readCodexAccountSnapshot(accountReadResponse);
+      } catch {
+        // Account data is optional at startup. Session init continues without it.
       }
       try {
-        const accountReadResponse = await this.sendRequest(context, "account/read", {});
-        console.log("codex account/read response", accountReadResponse);
-        context.account = readCodexAccountSnapshot(accountReadResponse);
-        console.log("codex subscription status", {
-          type: context.account.type,
-          planType: context.account.planType,
-          sparkEnabled: context.account.sparkEnabled,
+        const accountRateLimitsResponse = await this.sendRequest(context, "account/rateLimits/read", {});
+        this.emitEvent({
+          id: EventId.makeUnsafe(randomUUID()),
+          kind: "notification",
+          provider: "codex",
+          threadId: context.session.threadId,
+          createdAt: new Date().toISOString(),
+          method: "account/rateLimits/updated",
+          payload: accountRateLimitsResponse,
         });
-      } catch (error) {
-        console.log("codex account/read failed", error);
+      } catch {
+        // Rate-limit snapshots are best-effort. Live updates still flow later.
       }
 
       const normalizedModel = resolveCodexModelForAccount(

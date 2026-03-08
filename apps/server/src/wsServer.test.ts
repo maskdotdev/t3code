@@ -81,6 +81,7 @@ const defaultProviderStatuses: ReadonlyArray<ServerProviderStatus> = [
 
 const defaultProviderHealthService: ProviderHealthShape = {
   getStatuses: Effect.succeed(defaultProviderStatuses),
+  getRateLimits: () => Effect.succeed(null),
 };
 
 class MockTerminalManager implements TerminalManagerShape {
@@ -978,6 +979,77 @@ describe("WebSocket Server", () => {
     expectAvailableEditors((response.result as { availableEditors: unknown }).availableEditors);
   });
 
+  it("hydrates provider rate limits from provider health when runtime snapshots are empty", async () => {
+    const providerHealth: ProviderHealthShape = {
+      getStatuses: Effect.succeed(defaultProviderStatuses),
+      getRateLimits: (provider) =>
+        Effect.succeed(
+          provider === "codex"
+            ? {
+                rateLimitsByLimitId: {
+                  codex: {
+                    limitId: "codex",
+                    primary: {
+                      usedPercent: 6,
+                      windowDurationMins: 300,
+                      resetsAt: 1_772_992_558,
+                    },
+                    secondary: {
+                      usedPercent: 2,
+                      windowDurationMins: 10_080,
+                      resetsAt: 1_773_533_709,
+                    },
+                    planType: "pro",
+                  },
+                },
+              }
+            : null,
+        ),
+    };
+
+    server = await createTestServer({ cwd: "/my/workspace", providerHealth });
+    const addr = server.address();
+    const port = typeof addr === "object" && addr !== null ? addr.port : 0;
+
+    const ws = await connectWs(port);
+    connections.push(ws);
+    await waitForMessage(ws);
+
+    const response = await sendRequest(ws, WS_METHODS.serverGetConfig);
+    expect(response.error).toBeUndefined();
+    expect(response.result).toEqual({
+      cwd: "/my/workspace",
+      keybindingsConfigPath: expect.any(String),
+      keybindings: DEFAULT_RESOLVED_KEYBINDINGS,
+      issues: [],
+      providers: [
+        {
+          ...defaultProviderStatuses[0],
+          rateLimits: {
+            rateLimitsByLimitId: {
+              codex: {
+                limitId: "codex",
+                primary: {
+                  usedPercent: 6,
+                  windowDurationMins: 300,
+                  resetsAt: 1_772_992_558,
+                },
+                secondary: {
+                  usedPercent: 2,
+                  windowDurationMins: 10_080,
+                  resetsAt: 1_773_533_709,
+                },
+                planType: "pro",
+              },
+            },
+          },
+        },
+      ],
+      availableEditors: expect.any(Array),
+    });
+    expectAvailableEditors((response.result as { availableEditors: unknown }).availableEditors);
+  });
+
   it("upserts keybinding rules and updates cached server config", async () => {
     const stateDir = makeTempDir("t3code-state-upsert-keybinding-");
     const keybindingsPath = path.join(stateDir, "keybindings.json");
@@ -1266,6 +1338,147 @@ describe("WebSocket Server", () => {
     expect(domainEvent.type).toBe("thread.message-sent");
     expect(domainEvent.payload.messageId).toBe("assistant:item-1");
     expect(domainEvent.payload.text).toBe("hello from runtime");
+  });
+
+  it("hydrates provider rate limits into server config after runtime updates", async () => {
+    const runtimeEventPubSub = Effect.runSync(PubSub.unbounded<ProviderRuntimeEvent>());
+    const emitRuntimeEvent = (event: ProviderRuntimeEvent) => {
+      Effect.runSync(PubSub.publish(runtimeEventPubSub, event));
+    };
+    const unsupported = () => Effect.die(new Error("Unsupported provider call in test")) as never;
+    const providerService: ProviderServiceShape = {
+      startSession: (threadId) =>
+        Effect.succeed({
+          provider: "codex",
+          status: "ready",
+          runtimeMode: "full-access",
+          threadId,
+          createdAt: new Date().toISOString(),
+          updatedAt: new Date().toISOString(),
+        }),
+      sendTurn: ({ threadId }) =>
+        Effect.succeed({
+          threadId,
+          turnId: asTurnId("provider-turn-1"),
+        }),
+      interruptTurn: () => unsupported(),
+      respondToRequest: () => unsupported(),
+      respondToUserInput: () => unsupported(),
+      stopSession: () => unsupported(),
+      listSessions: () => Effect.succeed([]),
+      getCapabilities: () => Effect.succeed({ sessionModelSwitch: "in-session" }),
+      rollbackConversation: () => unsupported(),
+      streamEvents: Stream.fromPubSub(runtimeEventPubSub),
+    };
+    const providerLayer = Layer.succeed(ProviderService, providerService);
+
+    server = await createTestServer({
+      cwd: "/test",
+      providerLayer,
+    });
+    const addr = server.address();
+    const port = typeof addr === "object" && addr !== null ? addr.port : 0;
+
+    const ws = await connectWs(port);
+    connections.push(ws);
+    await waitForMessage(ws);
+
+    emitRuntimeEvent({
+      type: "account.rate-limits.updated",
+      eventId: asEventId("evt-provider-rate-limits"),
+      provider: "codex",
+      threadId: asThreadId("thread-1"),
+      createdAt: "2026-03-08T00:00:00.000Z",
+      payload: {
+        rateLimits: {
+          rateLimits: {
+            limitId: "codex",
+            primary: {
+              usedPercent: 5,
+              windowDurationMins: 300,
+              resetsAt: 1_772_992_558,
+            },
+            secondary: {
+              usedPercent: 11,
+              windowDurationMins: 10_080,
+              resetsAt: 1_773_533_709,
+            },
+          },
+        },
+      },
+    } as const);
+
+    const configPush = await waitForPush(
+      ws,
+      WS_CHANNELS.serverConfigUpdated,
+      (push) =>
+        Array.isArray((push.data as { providers?: unknown[] }).providers) &&
+        Boolean(
+          (push.data as { providers: Array<{ provider: string; rateLimits?: unknown }> }).providers.find(
+            (provider) =>
+              provider.provider === "codex" &&
+              typeof provider.rateLimits === "object" &&
+              provider.rateLimits !== null,
+          ),
+        ),
+    );
+
+    expect(configPush.data).toEqual({
+      issues: [],
+      providers: [
+        {
+          ...defaultProviderStatuses[0],
+          rateLimits: {
+            rateLimits: {
+              limitId: "codex",
+              primary: {
+                usedPercent: 5,
+                windowDurationMins: 300,
+                resetsAt: 1_772_992_558,
+              },
+              secondary: {
+                usedPercent: 11,
+                windowDurationMins: 10_080,
+                resetsAt: 1_773_533_709,
+              },
+            },
+          },
+        },
+      ],
+    });
+
+    const configResponse = await sendRequest(ws, WS_METHODS.serverGetConfig);
+    expect(configResponse.error).toBeUndefined();
+    expect(configResponse.result).toEqual({
+      cwd: "/test",
+      keybindingsConfigPath: expect.any(String),
+      keybindings: DEFAULT_RESOLVED_KEYBINDINGS,
+      issues: [],
+      providers: [
+        {
+          ...defaultProviderStatuses[0],
+          rateLimits: {
+            rateLimits: {
+              limitId: "codex",
+              primary: {
+                usedPercent: 5,
+                windowDurationMins: 300,
+                resetsAt: 1_772_992_558,
+              },
+              secondary: {
+                usedPercent: 11,
+                windowDurationMins: 10_080,
+                resetsAt: 1_773_533_709,
+              },
+            },
+          },
+        },
+      ],
+      availableEditors: expect.any(Array),
+    });
+    expectAvailableEditors(
+      (configResponse.result as { availableEditors: unknown }).availableEditors,
+    );
   });
 
   it("routes terminal RPC methods and broadcasts terminal events", async () => {

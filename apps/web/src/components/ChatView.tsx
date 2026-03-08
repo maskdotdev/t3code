@@ -15,6 +15,7 @@ import {
   type ResolvedKeybindingsConfig,
   type ProviderApprovalDecision,
   type ServerProviderStatus,
+  type ServerConfig,
   type ProviderKind,
   type ThreadId,
   type TurnId,
@@ -32,6 +33,7 @@ import {
 } from "@t3tools/shared/model";
 import {
   memo,
+  startTransition,
   useCallback,
   useEffect,
   useLayoutEffect,
@@ -50,7 +52,11 @@ import {
 } from "@tanstack/react-virtual";
 import { gitBranchesQueryOptions, gitCreateWorktreeMutationOptions } from "~/lib/gitReactQuery";
 import { projectSearchEntriesQueryOptions } from "~/lib/projectReactQuery";
-import { serverConfigQueryOptions, serverQueryKeys } from "~/lib/serverReactQuery";
+import {
+  serverConfigQueryOptions,
+  serverQueryKeys,
+  updateServerConfigProviderRateLimits,
+} from "~/lib/serverReactQuery";
 
 import { isElectron } from "../env";
 import { parseDiffRouteSearch, stripDiffSearchParams } from "../diffRouteSearch";
@@ -175,6 +181,7 @@ import {
   Zed,
 } from "./Icons";
 import { cn, isMacPlatform, isWindowsPlatform } from "~/lib/utils";
+import { normalizeProviderRateLimits } from "~/lib/providerRateLimits";
 import { Badge } from "./ui/badge";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "./ui/tooltip";
 import { Command, CommandItem, CommandList } from "./ui/command";
@@ -1291,11 +1298,38 @@ export default function ChatView({ threadId }: ChatViewProps) {
   const keybindings = serverConfigQuery.data?.keybindings ?? EMPTY_KEYBINDINGS;
   const availableEditors = serverConfigQuery.data?.availableEditors ?? EMPTY_AVAILABLE_EDITORS;
   const providerStatuses = serverConfigQuery.data?.providers ?? EMPTY_PROVIDER_STATUSES;
+  const providerRateLimitsSnapshot = useMemo(
+    () =>
+      Object.fromEntries(
+        providerStatuses.flatMap((status) =>
+          status.rateLimits !== undefined ? [[status.provider, status.rateLimits] as const] : [],
+        ),
+      ) as Partial<Record<ProviderKind, unknown>>,
+    [providerStatuses],
+  );
   const activeProvider = activeThread?.session?.provider ?? "codex";
   const activeProviderStatus = useMemo(
     () => providerStatuses.find((status) => status.provider === activeProvider) ?? null,
     [activeProvider, providerStatuses],
   );
+  useEffect(() => {
+    const api = readNativeApi();
+    if (!api?.providers?.onEvent) {
+      return undefined;
+    }
+
+    return api.providers.onEvent((event) => {
+      if (event.type !== "account.rate-limits.updated") {
+        return;
+      }
+
+      startTransition(() => {
+        queryClient.setQueryData(serverQueryKeys.config(), (current: ServerConfig | undefined) =>
+          updateServerConfigProviderRateLimits(current, event.provider, event.payload.rateLimits),
+        );
+      });
+    });
+  }, [queryClient]);
   const activeProjectCwd = activeProject?.cwd ?? null;
   const activeThreadWorktreePath = activeThread?.worktreePath ?? null;
   const threadTerminalRuntimeEnv = useMemo(() => {
@@ -3723,6 +3757,7 @@ export default function ChatView({ threadId }: ChatViewProps) {
                       model={selectedModelForPickerWithCustomFallback}
                       lockedProvider={lockedProvider}
                       modelOptionsByProvider={modelOptionsByProvider}
+                      rateLimitsByProvider={providerRateLimitsSnapshot}
                       serviceTierSetting={selectedServiceTierSetting}
                       onProviderModelChange={onProviderModelSelect}
                     />
@@ -5515,11 +5550,14 @@ const ProviderModelPicker = memo(function ProviderModelPicker(props: {
   model: ModelSlug;
   lockedProvider: ProviderKind | null;
   modelOptionsByProvider: Record<ProviderKind, ReadonlyArray<{ slug: string; name: string }>>;
+  rateLimitsByProvider: Partial<Record<ProviderKind, unknown>>;
   serviceTierSetting: AppServiceTier;
   disabled?: boolean;
   onProviderModelChange: (provider: ProviderKind, model: ModelSlug) => void;
 }) {
   const [isMenuOpen, setIsMenuOpen] = useState(false);
+  const [hoveredProvider, setHoveredProvider] = useState<ProviderKind | null>(null);
+
   const selectedProviderOptions = props.modelOptionsByProvider[props.provider];
   const selectedModelLabel =
     selectedProviderOptions.find((option) => option.slug === props.model)?.name ?? props.model;
@@ -5533,6 +5571,7 @@ const ProviderModelPicker = memo(function ProviderModelPicker(props: {
           setIsMenuOpen(false);
           return;
         }
+
         setIsMenuOpen(open);
       }}
     >
@@ -5555,55 +5594,69 @@ const ProviderModelPicker = memo(function ProviderModelPicker(props: {
           <ChevronDownIcon aria-hidden="true" className="size-3 opacity-60" />
         </span>
       </MenuTrigger>
-      <MenuPopup align="start">
+      <MenuPopup align="start" className="w-[18rem]">
         {AVAILABLE_PROVIDER_OPTIONS.map((option) => {
           const OptionIcon = PROVIDER_ICON_BY_PROVIDER[option.value];
           const isDisabledByProviderLock =
             props.lockedProvider !== null && props.lockedProvider !== option.value;
           return (
-            <MenuSub key={option.value}>
-              <MenuSubTrigger disabled={isDisabledByProviderLock}>
-                <OptionIcon
-                  aria-hidden="true"
-                  className="size-4 shrink-0 text-muted-foreground/85"
-                />
-                {option.label}
-              </MenuSubTrigger>
-              <MenuSubPopup className="[--available-height:min(24rem,70vh)]">
-                <MenuGroup>
-                  <MenuRadioGroup
-                    value={props.provider === option.value ? props.model : ""}
-                    onValueChange={(value) => {
-                      if (props.disabled) return;
-                      if (isDisabledByProviderLock) return;
-                      if (!value) return;
-                      const resolvedModel = resolveModelForProviderPicker(
-                        option.value,
-                        value,
-                        props.modelOptionsByProvider[option.value],
-                      );
-                      if (!resolvedModel) return;
-                      props.onProviderModelChange(option.value, resolvedModel);
-                      setIsMenuOpen(false);
-                    }}
-                  >
-                    {props.modelOptionsByProvider[option.value].map((modelOption) => (
-                      <MenuRadioItem
-                        key={`${option.value}:${modelOption.slug}`}
-                        value={modelOption.slug}
-                        onClick={() => setIsMenuOpen(false)}
-                      >
-                        {option.value === "codex" &&
-                        shouldShowFastTierIcon(modelOption.slug, props.serviceTierSetting) ? (
-                          <ZapIcon className="size-3.5 shrink-0 text-amber-500" />
-                        ) : null}
-                        {modelOption.name}
-                      </MenuRadioItem>
-                    ))}
-                  </MenuRadioGroup>
-                </MenuGroup>
-              </MenuSubPopup>
-            </MenuSub>
+            <div
+              key={option.value}
+              onMouseEnter={() => setHoveredProvider(option.value)}
+              onMouseLeave={() => setHoveredProvider(null)}
+            >
+              <ProviderRateLimitSummary
+                provider={option.value}
+                rateLimits={props.rateLimitsByProvider[option.value] ?? null}
+                visible={hoveredProvider === option.value}
+              />
+              <MenuSub>
+                <MenuSubTrigger
+                  disabled={isDisabledByProviderLock}
+                  onFocus={() => setHoveredProvider(option.value)}
+                >
+                  <OptionIcon
+                    aria-hidden="true"
+                    className="size-4 shrink-0 text-muted-foreground/85"
+                  />
+                  {option.label}
+                </MenuSubTrigger>
+                <MenuSubPopup className="[--available-height:min(24rem,70vh)]">
+                  <MenuGroup>
+                    <MenuRadioGroup
+                      value={props.provider === option.value ? props.model : ""}
+                      onValueChange={(value) => {
+                        if (props.disabled) return;
+                        if (isDisabledByProviderLock) return;
+                        if (!value) return;
+                        const resolvedModel = resolveModelForProviderPicker(
+                          option.value,
+                          value,
+                          props.modelOptionsByProvider[option.value],
+                        );
+                        if (!resolvedModel) return;
+                        props.onProviderModelChange(option.value, resolvedModel);
+                        setIsMenuOpen(false);
+                      }}
+                    >
+                      {props.modelOptionsByProvider[option.value].map((modelOption) => (
+                        <MenuRadioItem
+                          key={`${option.value}:${modelOption.slug}`}
+                          value={modelOption.slug}
+                          onClick={() => setIsMenuOpen(false)}
+                        >
+                          {option.value === "codex" &&
+                          shouldShowFastTierIcon(modelOption.slug, props.serviceTierSetting) ? (
+                            <ZapIcon className="size-3.5 shrink-0 text-amber-500" />
+                          ) : null}
+                          {modelOption.name}
+                        </MenuRadioItem>
+                      ))}
+                    </MenuRadioGroup>
+                  </MenuGroup>
+                </MenuSubPopup>
+              </MenuSub>
+            </div>
           );
         })}
         {UNAVAILABLE_PROVIDER_OPTIONS.length > 0 && <MenuDivider />}
@@ -5640,6 +5693,117 @@ const ProviderModelPicker = memo(function ProviderModelPicker(props: {
         })}
       </MenuPopup>
     </Menu>
+  );
+});
+
+function formatProviderRateLimitReset(resetAtUnixSeconds: number | null): string {
+  if (!resetAtUnixSeconds || resetAtUnixSeconds <= 0) {
+    return "";
+  }
+
+  const date = new Date(resetAtUnixSeconds * 1_000);
+  if (Number.isNaN(date.getTime())) {
+    return "";
+  }
+
+  return date.toLocaleString([], {
+    month: "short",
+    day: "numeric",
+    hour: "numeric",
+    minute: "2-digit",
+  });
+}
+
+function rateLimitTone(remainingPercent: number): {
+  barClassName: string;
+  textClassName: string;
+} {
+  if (remainingPercent >= 30) {
+    return {
+      barClassName: "bg-emerald-500/75",
+      textClassName: "text-emerald-600 dark:text-emerald-300",
+    };
+  }
+  if (remainingPercent >= 10) {
+    return {
+      barClassName: "bg-amber-500/75",
+      textClassName: "text-amber-600 dark:text-amber-300",
+    };
+  }
+  return {
+    barClassName: "bg-rose-500/75",
+    textClassName: "text-rose-600 dark:text-rose-300",
+  };
+}
+
+const ProviderRateLimitSummary = memo(function ProviderRateLimitSummary(props: {
+  provider: ProviderKind;
+  rateLimits: unknown;
+  visible: boolean;
+}) {
+  const rateLimitSummary = useMemo(
+    () => normalizeProviderRateLimits(props.provider, props.rateLimits),
+    [props.provider, props.rateLimits],
+  );
+
+  if (props.provider !== "codex" || !rateLimitSummary || rateLimitSummary.groups.length === 0) {
+    return null;
+  }
+
+  return (
+    <div
+      className={cn(
+        "grid transition-[grid-template-rows,opacity] duration-300 ease-in-out",
+        props.visible ? "grid-rows-[1fr] opacity-100" : "grid-rows-[0fr] opacity-0",
+      )}
+    >
+      <div className="overflow-hidden">
+        <div className="px-2 pb-0.5 pt-1">
+          <div className="space-y-1">
+            {rateLimitSummary.groups.map((group) => (
+              <div key={group.key}>
+                {rateLimitSummary.groups.length > 1 ? (
+                  <div className="mb-0.5 text-[10px] font-medium text-muted-foreground/70">
+                    {group.label}
+                  </div>
+                ) : null}
+                {group.windows.map((window) => {
+                  const tone = rateLimitTone(window.remainingPercent);
+                  const resetStr = formatProviderRateLimitReset(window.resetAtUnixSeconds);
+                  return (
+                    <div key={window.key} className="flex items-center gap-1.5">
+                      <span className="w-4 shrink-0 text-[10px] text-muted-foreground/70">
+                        {window.label}
+                      </span>
+                      <div className="h-1 min-w-8 flex-1 overflow-hidden rounded-full bg-border/60">
+                        <div
+                          className={cn(
+                            "h-full rounded-full",
+                            tone.barClassName,
+                          )}
+                          style={{ width: `${window.usedPercent}%` }}
+                        />
+                      </div>
+                      <span
+                        className={cn(
+                          "w-[3.25rem] shrink-0 text-[10px] tabular-nums font-medium text-right",
+                          tone.textClassName,
+                        )}
+                      >
+                        {window.remainingPercent}% left
+                      </span>
+                      <span className="w-[6.5rem] shrink-0 text-[10px] text-muted-foreground/50 text-right">
+                        {resetStr || "\u00A0"}
+                      </span>
+                    </div>
+                  );
+                })}
+              </div>
+            ))}
+          </div>
+        </div>
+      </div>
+    </div>
   );
 });
 

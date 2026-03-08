@@ -53,6 +53,7 @@ import type {
   SpeechToTextUpdateConfigInput,
 } from "./speech";
 import { EditorId } from "./editor";
+import type { ProviderRuntimeEvent } from "./providerRuntime";
 
 export interface ContextMenuItem<T extends string = string> {
   id: T;
@@ -122,6 +123,9 @@ export interface NativeApi {
   projects: {
     searchEntries: (input: ProjectSearchEntriesInput) => Promise<ProjectSearchEntriesResult>;
     writeFile: (input: ProjectWriteFileInput) => Promise<ProjectWriteFileResult>;
+  };
+  providers: {
+    onEvent: (callback: (event: ProviderRuntimeEvent) => void) => () => void;
   };
   shell: {
     openInEditor: (cwd: string, editor: EditorId) => Promise<void>;

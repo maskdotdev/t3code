@@ -220,9 +220,11 @@ describe("wsNativeApi", () => {
     const api = createWsNativeApi();
     const onTerminalEvent = vi.fn();
     const onDomainEvent = vi.fn();
+    const onProviderEvent = vi.fn();
 
     api.terminal.onEvent(onTerminalEvent);
     api.orchestration.onDomainEvent(onDomainEvent);
+    api.providers.onEvent(onProviderEvent);
 
     const terminalEvent = {
       threadId: "thread-1",
@@ -255,11 +257,30 @@ describe("wsNativeApi", () => {
       },
     } as const;
     emitPush(ORCHESTRATION_WS_CHANNELS.domainEvent, orchestrationEvent);
+    const providerEvent = {
+      eventId: "provider-event-1",
+      provider: "codex",
+      threadId: "thread-1",
+      createdAt: "2026-02-24T00:00:00.000Z",
+      type: "account.rate-limits.updated",
+      payload: {
+        rateLimits: {
+          primary: {
+            usedPercent: 24,
+            windowDurationMins: 300,
+            resetAt: 1_772_000_000,
+          },
+        },
+      },
+    } as const;
+    emitPush(WS_CHANNELS.providerEvent, providerEvent);
 
     expect(onTerminalEvent).toHaveBeenCalledTimes(1);
     expect(onTerminalEvent).toHaveBeenCalledWith(terminalEvent);
     expect(onDomainEvent).toHaveBeenCalledTimes(1);
     expect(onDomainEvent).toHaveBeenCalledWith(orchestrationEvent);
+    expect(onProviderEvent).toHaveBeenCalledTimes(1);
+    expect(onProviderEvent).toHaveBeenCalledWith(providerEvent);
     expect(warnSpy).not.toHaveBeenCalled();
   });
 
