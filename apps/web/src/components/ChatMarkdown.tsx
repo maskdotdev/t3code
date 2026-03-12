@@ -1,10 +1,6 @@
-import {
-  getSharedHighlighter,
-  type DiffsHighlighter,
-  type SupportedLanguages,
-} from "@pierre/diffs";
+import { DiffsHighlighter, getSharedHighlighter, SupportedLanguages } from "@pierre/diffs";
 import { CheckIcon, CopyIcon } from "lucide-react";
-import {
+import React, {
   Children,
   Suspense,
   isValidElement,
@@ -20,13 +16,34 @@ import {
 import type { Components } from "react-markdown";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
+import { openInPreferredEditor } from "../editorPreferences";
 import { resolveDiffThemeName, type DiffThemeName } from "../lib/diffRendering";
 import { fnv1a32 } from "../lib/diffRendering";
 import { LRUCache } from "../lib/lruCache";
 import { useTheme } from "../hooks/useTheme";
 import { resolveMarkdownFileLinkTarget } from "../markdown-links";
 import { readNativeApi } from "../nativeApi";
-import { preferredTerminalEditor } from "../terminal-links";
+
+class CodeHighlightErrorBoundary extends React.Component<
+  { fallback: ReactNode; children: ReactNode },
+  { hasError: boolean }
+> {
+  constructor(props: { fallback: ReactNode; children: ReactNode }) {
+    super(props);
+    this.state = { hasError: false };
+  }
+
+  static getDerivedStateFromError() {
+    return { hasError: true };
+  }
+
+  override render() {
+    if (this.state.hasError) {
+      return this.props.fallback;
+    }
+    return this.props.children;
+  }
+}
 
 interface ChatMarkdownProps {
   text: string;
@@ -45,7 +62,9 @@ const highlighterPromiseCache = new Map<string, Promise<DiffsHighlighter>>();
 
 function extractFenceLanguage(className: string | undefined): string {
   const match = className?.match(CODE_FENCE_LANGUAGE_REGEX);
-  return match?.[1] ?? "text";
+  const raw = match?.[1] ?? "text";
+  // Shiki doesn't bundle a gitignore grammar; ini is a close match (#685)
+  return raw === "gitignore" ? "ini" : raw;
 }
 
 function nodeToPlainText(node: ReactNode): string {
@@ -99,6 +118,14 @@ function getHighlighterPromise(language: string): Promise<DiffsHighlighter> {
     themes: [resolveDiffThemeName("dark"), resolveDiffThemeName("light")],
     langs: [language as SupportedLanguages],
     preferredHighlighter: "shiki-js",
+  }).catch((err) => {
+    highlighterPromiseCache.delete(language);
+    if (language === "text") {
+      // "text" itself failed — Shiki cannot initialize at all, surface the error
+      throw err;
+    }
+    // Language not supported by Shiki — fall back to "text"
+    return getHighlighterPromise("text");
   });
   highlighterPromiseCache.set(language, promise);
   return promise;
@@ -179,10 +206,19 @@ function SuspenseShikiCodeBlock({
   }
 
   const highlighter = use(getHighlighterPromise(language));
-  const highlightedHtml = useMemo(
-    () => highlighter.codeToHtml(code, { lang: language, theme: themeName }),
-    [code, highlighter, language, themeName],
-  );
+  const highlightedHtml = useMemo(() => {
+    try {
+      return highlighter.codeToHtml(code, { lang: language, theme: themeName });
+    } catch (error) {
+      // Log highlighting failures for debugging while falling back to plain text
+      console.warn(
+        `Code highlighting failed for language "${language}", falling back to plain text.`,
+        error instanceof Error ? error.message : error,
+      );
+      // If highlighting fails for this language, render as plain text
+      return highlighter.codeToHtml(code, { lang: "text", theme: themeName });
+    }
+  }, [code, highlighter, language, themeName]);
 
   useEffect(() => {
     if (!isStreaming) {
@@ -219,7 +255,7 @@ function ChatMarkdown({ text, cwd, isStreaming = false }: ChatMarkdownProps) {
               event.stopPropagation();
               const api = readNativeApi();
               if (api) {
-                void api.shell.openInEditor(targetPath, preferredTerminalEditor());
+                void openInPreferredEditor(api, targetPath);
               } else {
                 console.warn("Native API not found. Unable to open file in editor.");
               }
@@ -235,14 +271,16 @@ function ChatMarkdown({ text, cwd, isStreaming = false }: ChatMarkdownProps) {
 
         return (
           <MarkdownCodeBlock code={codeBlock.code}>
-            <Suspense fallback={<pre {...props}>{children}</pre>}>
-              <SuspenseShikiCodeBlock
-                className={codeBlock.className}
-                code={codeBlock.code}
-                themeName={diffThemeName}
-                isStreaming={isStreaming}
-              />
-            </Suspense>
+            <CodeHighlightErrorBoundary fallback={<pre {...props}>{children}</pre>}>
+              <Suspense fallback={<pre {...props}>{children}</pre>}>
+                <SuspenseShikiCodeBlock
+                  className={codeBlock.className}
+                  code={codeBlock.code}
+                  themeName={diffThemeName}
+                  isStreaming={isStreaming}
+                />
+              </Suspense>
+            </CodeHighlightErrorBoundary>
           </MarkdownCodeBlock>
         );
       },

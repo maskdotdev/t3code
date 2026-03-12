@@ -1,7 +1,4 @@
-import {
-  LexicalComposer,
-  type InitialConfigType,
-} from "@lexical/react/LexicalComposer";
+import { LexicalComposer, type InitialConfigType } from "@lexical/react/LexicalComposer";
 import { useLexicalComposerContext } from "@lexical/react/LexicalComposerContext";
 import { ContentEditable } from "@lexical/react/LexicalContentEditable";
 import { LexicalErrorBoundary } from "@lexical/react/LexicalErrorBoundary";
@@ -331,12 +328,11 @@ function $setSelectionAtComposerOffset(nextOffset: number): void {
   const composerLength = $getComposerRootLength();
   const boundedOffset = Math.max(0, Math.min(nextOffset, composerLength));
   const remainingRef = { value: boundedOffset };
-  const point =
-    findSelectionPointAtOffset(root, remainingRef) ?? {
-      key: root.getKey(),
-      offset: root.getChildren().length,
-      type: "element" as const,
-    };
+  const point = findSelectionPointAtOffset(root, remainingRef) ?? {
+    key: root.getKey(),
+    offset: root.getChildren().length,
+    type: "element" as const,
+  };
   const selection = $createRangeSelection();
   selection.anchor.set(point.key, point.offset, point.type);
   selection.focus.set(point.key, point.offset, point.type);
@@ -633,6 +629,7 @@ function ComposerPromptEditorInner({
   const [editor] = useLexicalComposerContext();
   const onChangeRef = useRef(onChange);
   const snapshotRef = useRef({ value, cursor: clampCursor(value, cursor) });
+  const isApplyingControlledUpdateRef = useRef(false);
 
   useEffect(() => {
     onChangeRef.current = onChange;
@@ -649,21 +646,26 @@ function ComposerPromptEditorInner({
       return;
     }
 
-    if (previousSnapshot.value !== value) {
-      editor.update(() => {
-        $setComposerEditorPrompt(value);
-      });
-    }
-
     snapshotRef.current = { value, cursor: normalizedCursor };
 
     const rootElement = editor.getRootElement();
-    if (!rootElement || document.activeElement !== rootElement) {
+    const isFocused = Boolean(rootElement && document.activeElement === rootElement);
+    if (previousSnapshot.value === value && !isFocused) {
       return;
     }
 
+    isApplyingControlledUpdateRef.current = true;
     editor.update(() => {
-      $setSelectionAtComposerOffset(normalizedCursor);
+      const valueChanged = previousSnapshot.value !== value;
+      if (previousSnapshot.value !== value) {
+        $setComposerEditorPrompt(value);
+      }
+      if (valueChanged || isFocused) {
+        $setSelectionAtComposerOffset(normalizedCursor);
+      }
+    });
+    queueMicrotask(() => {
+      isApplyingControlledUpdateRef.current = false;
     });
   }, [cursor, editor, value]);
 
@@ -709,9 +711,7 @@ function ComposerPromptEditorInner({
       focus: () => {
         focusAt(snapshotRef.current.cursor);
       },
-      focusAt: (nextCursor: number) => {
-        focusAt(nextCursor);
-      },
+      focusAt,
       focusAtEnd: () => {
         focusAt(snapshotRef.current.value.length);
       },
@@ -724,9 +724,15 @@ function ComposerPromptEditorInner({
     editorState.read(() => {
       const nextValue = $getRoot().getTextContent();
       const fallbackCursor = clampCursor(nextValue, snapshotRef.current.cursor);
-      const nextCursor = clampCursor(nextValue, $readSelectionOffsetFromEditorState(fallbackCursor));
+      const nextCursor = clampCursor(
+        nextValue,
+        $readSelectionOffsetFromEditorState(fallbackCursor),
+      );
       const previousSnapshot = snapshotRef.current;
       if (previousSnapshot.value === nextValue && previousSnapshot.cursor === nextCursor) {
+        return;
+      }
+      if (isApplyingControlledUpdateRef.current) {
         return;
       }
       snapshotRef.current = {
@@ -749,6 +755,7 @@ function ComposerPromptEditorInner({
               "block max-h-[200px] min-h-17.5 w-full overflow-y-auto whitespace-pre-wrap break-words bg-transparent text-[14px] leading-relaxed text-foreground focus:outline-none",
               className,
             )}
+            data-testid="composer-editor"
             aria-placeholder={placeholder}
             placeholder={<span />}
             onPaste={onPaste}
@@ -771,41 +778,42 @@ function ComposerPromptEditorInner({
   );
 }
 
-export const ComposerPromptEditor = forwardRef<ComposerPromptEditorHandle, ComposerPromptEditorProps>(
-  function ComposerPromptEditor(
-    { value, cursor, disabled, placeholder, className, onChange, onCommandKeyDown, onPaste },
-    ref,
-  ) {
-    const initialValueRef = useRef(value);
-    const initialConfig = useMemo<InitialConfigType>(
-      () => ({
-        namespace: "t3tools-composer-editor",
-        editable: true,
-        nodes: [ComposerMentionNode],
-        editorState: () => {
-          $setComposerEditorPrompt(initialValueRef.current);
-        },
-        onError: (error) => {
-          throw error;
-        },
-      }),
-      [],
-    );
+export const ComposerPromptEditor = forwardRef<
+  ComposerPromptEditorHandle,
+  ComposerPromptEditorProps
+>(function ComposerPromptEditor(
+  { value, cursor, disabled, placeholder, className, onChange, onCommandKeyDown, onPaste },
+  ref,
+) {
+  const initialValueRef = useRef(value);
+  const initialConfig = useMemo<InitialConfigType>(
+    () => ({
+      namespace: "t3tools-composer-editor",
+      editable: true,
+      nodes: [ComposerMentionNode],
+      editorState: () => {
+        $setComposerEditorPrompt(initialValueRef.current);
+      },
+      onError: (error) => {
+        throw error;
+      },
+    }),
+    [],
+  );
 
-    return (
-      <LexicalComposer key={COMPOSER_EDITOR_HMR_KEY} initialConfig={initialConfig}>
-        <ComposerPromptEditorInner
-          value={value}
-          cursor={cursor}
-          disabled={disabled}
-          placeholder={placeholder}
-          onChange={onChange}
-          onPaste={onPaste}
-          editorRef={ref}
-          {...(onCommandKeyDown ? { onCommandKeyDown } : {})}
-          {...(className ? { className } : {})}
-        />
-      </LexicalComposer>
-    );
-  },
-);
+  return (
+    <LexicalComposer key={COMPOSER_EDITOR_HMR_KEY} initialConfig={initialConfig}>
+      <ComposerPromptEditorInner
+        value={value}
+        cursor={cursor}
+        disabled={disabled}
+        placeholder={placeholder}
+        onChange={onChange}
+        onPaste={onPaste}
+        editorRef={ref}
+        {...(onCommandKeyDown ? { onCommandKeyDown } : {})}
+        {...(className ? { className } : {})}
+      />
+    </LexicalComposer>
+  );
+});

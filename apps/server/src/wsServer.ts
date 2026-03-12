@@ -20,12 +20,12 @@ import {
   PROVIDER_SEND_TURN_MAX_IMAGE_BYTES,
   ProjectId,
   ThreadId,
-  TerminalEvent,
   WS_CHANNELS,
   WS_METHODS,
   WebSocketRequest,
-  WsPush,
+  type WsResponse as WsResponseMessage,
   WsResponse,
+  type WsPushEnvelopeBase,
 } from "@t3tools/contracts";
 import * as NodeHttpServer from "@effect/platform-node/NodeHttpServer";
 import {
@@ -36,6 +36,7 @@ import {
   Layer,
   Path,
   Ref,
+  Result,
   Schema,
   Scope,
   ServiceMap,
@@ -65,6 +66,7 @@ import {
   normalizeAttachmentRelativePath,
   resolveAttachmentRelativePath,
 } from "./attachmentPaths";
+
 import {
   createAttachmentId,
   resolveAttachmentPath,
@@ -72,6 +74,10 @@ import {
 } from "./attachmentStore.ts";
 import { parseBase64DataUrl } from "./imageMime.ts";
 import { AnalyticsService } from "./telemetry/Services/AnalyticsService.ts";
+import { expandHomePath } from "./os-jank.ts";
+import { makeServerPushBus } from "./wsServer/pushBus.ts";
+import { makeServerReadiness } from "./wsServer/readiness.ts";
+import { decodeJsonResult, formatSchemaError } from "@t3tools/shared/schemaJson";
 
 /**
  * ServerShape - Service API for server lifecycle control.
@@ -97,8 +103,7 @@ export interface ServerShape {
  */
 export class Server extends ServiceMap.Service<Server, ServerShape>()("t3/wsServer/Server") {}
 
-const isServerNotRunningError = (error: unknown): boolean => {
-  if (!(error instanceof Error)) return false;
+const isServerNotRunningError = (error: Error): boolean => {
   const maybeCode = (error as NodeJS.ErrnoException).code;
   return (
     maybeCode === "ERR_SERVER_NOT_RUNNING" || error.message.toLowerCase().includes("not running")
@@ -194,6 +199,9 @@ function stripRequestTag<T extends { _tag: string }>(body: T) {
   return Struct.omit(body, ["_tag"]);
 }
 
+const encodeWsResponse = Schema.encodeEffect(Schema.fromJsonString(WsResponse));
+const decodeWebSocketRequest = decodeJsonResult(WebSocketRequest);
+
 export type ServerCoreRuntimeServices =
   | OrchestrationEngineService
   | ProjectionSnapshotQuery
@@ -264,40 +272,65 @@ export const createServer = Effect.fn(function* (): Effect.fn.Return<
 
   const clients = yield* Ref.make(new Set<WebSocket>());
   const logger = createLogger("ws");
+  const readiness = yield* makeServerReadiness;
 
-  function logOutgoingPush(push: WsPush, recipients: number) {
+  function logOutgoingPush(push: WsPushEnvelopeBase, recipients: number) {
     if (!logWebSocketEvents) return;
     logger.event("outgoing push", {
       channel: push.channel,
+      sequence: push.sequence,
       recipients,
       payload: push.data,
     });
   }
 
-  const encodePush = Schema.encodeEffect(Schema.fromJsonString(WsPush));
-  const broadcastPush = Effect.fnUntraced(function* (push: WsPush) {
-    const message = yield* encodePush(push);
-    let recipients = 0;
-    for (const client of yield* Ref.get(clients)) {
-      if (client.readyState === client.OPEN) {
-        client.send(message);
-        recipients += 1;
-      }
-    }
-    logOutgoingPush(push, recipients);
+  const pushBus = yield* makeServerPushBus({
+    clients,
+    logOutgoingPush,
   });
-
-  const onTerminalEvent = Effect.fnUntraced(function* (event: TerminalEvent) {
-    yield* broadcastPush({
-      type: "push",
-      channel: WS_CHANNELS.terminalEvent,
-      data: event,
-    });
-  });
+  yield* readiness.markPushBusReady;
+  yield* keybindingsManager.start.pipe(
+    Effect.mapError(
+      (cause) => new ServerLifecycleError({ operation: "keybindingsRuntimeStart", cause }),
+    ),
+  );
+  yield* readiness.markKeybindingsReady;
 
   const normalizeDispatchCommand = Effect.fnUntraced(function* (input: {
     readonly command: ClientOrchestrationCommand;
   }) {
+    const normalizeProjectWorkspaceRoot = Effect.fnUntraced(function* (workspaceRoot: string) {
+      const normalizedWorkspaceRoot = path.resolve(yield* expandHomePath(workspaceRoot.trim()));
+      const workspaceStat = yield* fileSystem
+        .stat(normalizedWorkspaceRoot)
+        .pipe(Effect.catch(() => Effect.succeed(null)));
+      if (!workspaceStat) {
+        return yield* new RouteRequestError({
+          message: `Project directory does not exist: ${normalizedWorkspaceRoot}`,
+        });
+      }
+      if (workspaceStat.type !== "Directory") {
+        return yield* new RouteRequestError({
+          message: `Project path is not a directory: ${normalizedWorkspaceRoot}`,
+        });
+      }
+      return normalizedWorkspaceRoot;
+    });
+
+    if (input.command.type === "project.create") {
+      return {
+        ...input.command,
+        workspaceRoot: yield* normalizeProjectWorkspaceRoot(input.command.workspaceRoot),
+      } satisfies OrchestrationCommand;
+    }
+
+    if (input.command.type === "project.meta.update" && input.command.workspaceRoot !== undefined) {
+      return {
+        ...input.command,
+        workspaceRoot: yield* normalizeProjectWorkspaceRoot(input.command.workspaceRoot),
+      } satisfies OrchestrationCommand;
+    }
+
     if (input.command.type !== "thread.turn.start") {
       return input.command as OrchestrationCommand;
     }
@@ -443,7 +476,7 @@ export const createServer = Effect.fn(function* (): Effect.fn.Return<
               }
             }),
           ).pipe(Effect.exit);
-          if (streamExit._tag === "Failure") {
+          if (Exit.isFailure(streamExit)) {
             if (!res.destroyed) {
               res.destroy();
             }
@@ -575,25 +608,18 @@ export const createServer = Effect.fn(function* (): Effect.fn.Return<
   yield* Effect.addFinalizer(() => Scope.close(subscriptionsScope, Exit.void));
 
   yield* Stream.runForEach(orchestrationEngine.streamDomainEvents, (event) =>
-    broadcastPush({
-      type: "push",
-      channel: ORCHESTRATION_WS_CHANNELS.domainEvent,
-      data: event,
-    }),
+    pushBus.publishAll(ORCHESTRATION_WS_CHANNELS.domainEvent, event),
   ).pipe(Effect.forkIn(subscriptionsScope));
 
-  yield* Stream.runForEach(keybindingsManager.changes, (event) =>
-    broadcastPush({
-      type: "push",
-      channel: WS_CHANNELS.serverConfigUpdated,
-      data: {
-        issues: event.issues,
-        providers: providerStatuses,
-      },
+  yield* Stream.runForEach(keybindingsManager.streamChanges, (event) =>
+    pushBus.publishAll(WS_CHANNELS.serverConfigUpdated, {
+      issues: event.issues,
+      providers: providerStatuses,
     }),
   ).pipe(Effect.forkIn(subscriptionsScope));
 
   yield* Scope.provide(orchestrationReactor.start, subscriptionsScope);
+  yield* readiness.markOrchestrationSubscriptionsReady;
 
   let welcomeBootstrapProjectId: ProjectId | undefined;
   let welcomeBootstrapThreadId: ThreadId | undefined;
@@ -658,26 +684,24 @@ export const createServer = Effect.fn(function* (): Effect.fn.Return<
     );
   }
 
-  const runPromise = yield* Effect.map(Effect.services<never>(), Effect.runPromiseWith);
+  const runtimeServices = yield* Effect.services<
+    ServerRuntimeServices | ServerConfig | FileSystem.FileSystem | Path.Path
+  >();
+  const runPromise = Effect.runPromiseWith(runtimeServices);
 
   const unsubscribeTerminalEvents = yield* terminalManager.subscribe(
-    (event) => void Effect.runPromise(onTerminalEvent(event)),
+    (event) => void Effect.runPromise(pushBus.publishAll(WS_CHANNELS.terminalEvent, event)),
   );
   yield* Effect.addFinalizer(() => Effect.sync(() => unsubscribeTerminalEvents()));
+  yield* readiness.markTerminalSubscriptionsReady;
 
   yield* NodeHttpServer.make(() => httpServer, listenOptions).pipe(
     Effect.mapError((cause) => new ServerLifecycleError({ operation: "httpServerListen", cause })),
   );
+  yield* readiness.markHttpListening;
 
   yield* Effect.addFinalizer(() =>
-    Effect.all([
-      closeAllClients,
-      closeWebSocketServer.pipe(
-        Effect.catch((error) =>
-          Effect.logWarning("failed to close web socket server", { cause: error }),
-        ),
-      ),
-    ]),
+    Effect.all([closeAllClients, closeWebSocketServer.pipe(Effect.ignoreCause({ log: true }))]),
   );
 
   const routeRequest = Effect.fnUntraced(function* (request: WebSocketRequest) {
@@ -731,14 +755,16 @@ export const createServer = Effect.fn(function* (): Effect.fn.Return<
           relativePath: body.relativePath,
           path,
         });
-        yield* fileSystem.makeDirectory(path.dirname(target.absolutePath), { recursive: true }).pipe(
-          Effect.mapError(
-            (cause) =>
-              new RouteRequestError({
-                message: `Failed to prepare workspace path: ${String(cause)}`,
-              }),
-          ),
-        );
+        yield* fileSystem
+          .makeDirectory(path.dirname(target.absolutePath), { recursive: true })
+          .pipe(
+            Effect.mapError(
+              (cause) =>
+                new RouteRequestError({
+                  message: `Failed to prepare workspace path: ${String(cause)}`,
+                }),
+            ),
+          );
         yield* fileSystem.writeFileString(target.absolutePath, body.contents).pipe(
           Effect.mapError(
             (cause) =>
@@ -768,6 +794,16 @@ export const createServer = Effect.fn(function* (): Effect.fn.Return<
       case WS_METHODS.gitRunStackedAction: {
         const body = stripRequestTag(request.body);
         return yield* gitManager.runStackedAction(body);
+      }
+
+      case WS_METHODS.gitResolvePullRequest: {
+        const body = stripRequestTag(request.body);
+        return yield* gitManager.resolvePullRequest(body);
+      }
+
+      case WS_METHODS.gitPreparePullRequestThread: {
+        const body = stripRequestTag(request.body);
+        return yield* gitManager.preparePullRequestThread(body);
       }
 
       case WS_METHODS.gitListBranches: {
@@ -857,44 +893,40 @@ export const createServer = Effect.fn(function* (): Effect.fn.Return<
   });
 
   const handleMessage = Effect.fnUntraced(function* (ws: WebSocket, raw: unknown) {
-    const encodeResponse = Schema.encodeEffect(Schema.fromJsonString(WsResponse));
+    const sendWsResponse = (response: WsResponseMessage) =>
+      encodeWsResponse(response).pipe(
+        Effect.tap((encodedResponse) => Effect.sync(() => ws.send(encodedResponse))),
+        Effect.asVoid,
+      );
 
     const messageText = websocketRawToString(raw);
     if (messageText === null) {
-      const errorResponse = yield* encodeResponse({
+      return yield* sendWsResponse({
         id: "unknown",
         error: { message: "Invalid request format: Failed to read message" },
       });
-      ws.send(errorResponse);
-      return;
     }
 
-    const request = Schema.decodeExit(Schema.fromJsonString(WebSocketRequest))(messageText);
-    if (request._tag === "Failure") {
-      const errorResponse = yield* encodeResponse({
+    const request = decodeWebSocketRequest(messageText);
+    if (Result.isFailure(request)) {
+      return yield* sendWsResponse({
         id: "unknown",
-        error: { message: `Invalid request format: ${Cause.pretty(request.cause)}` },
+        error: { message: `Invalid request format: ${formatSchemaError(request.failure)}` },
       });
-      ws.send(errorResponse);
-      return;
     }
 
-    const result = yield* Effect.exit(routeRequest(request.value));
-    if (result._tag === "Failure") {
-      const errorResponse = yield* encodeResponse({
-        id: request.value.id,
+    const result = yield* Effect.exit(routeRequest(request.success));
+    if (Exit.isFailure(result)) {
+      return yield* sendWsResponse({
+        id: request.success.id,
         error: { message: Cause.pretty(result.cause) },
       });
-      ws.send(errorResponse);
-      return;
     }
 
-    const response = yield* encodeResponse({
-      id: request.value.id,
+    return yield* sendWsResponse({
+      id: request.success.id,
       result: result.value,
     });
-
-    ws.send(response);
   });
 
   httpServer.on("upgrade", (request, socket, head) => {
@@ -922,30 +954,28 @@ export const createServer = Effect.fn(function* (): Effect.fn.Return<
   });
 
   wss.on("connection", (ws) => {
-    void runPromise(Ref.update(clients, (clients) => clients.add(ws)));
-
     const segments = cwd.split(/[/\\]/).filter(Boolean);
     const projectName = segments[segments.length - 1] ?? "project";
 
-    const welcome: WsPush = {
-      type: "push",
-      channel: WS_CHANNELS.serverWelcome,
-      data: {
-        cwd,
-        projectName,
-        ...(welcomeBootstrapProjectId ? { bootstrapProjectId: welcomeBootstrapProjectId } : {}),
-        ...(welcomeBootstrapThreadId ? { bootstrapThreadId: welcomeBootstrapThreadId } : {}),
-      },
+    const welcomeData = {
+      cwd,
+      projectName,
+      ...(welcomeBootstrapProjectId ? { bootstrapProjectId: welcomeBootstrapProjectId } : {}),
+      ...(welcomeBootstrapThreadId ? { bootstrapThreadId: welcomeBootstrapThreadId } : {}),
     };
-    logOutgoingPush(welcome, 1);
-    ws.send(JSON.stringify(welcome));
+    // Send welcome before adding to broadcast set so publishAll calls
+    // cannot reach this client before the welcome arrives.
+    void runPromise(
+      readiness.awaitServerReady.pipe(
+        Effect.flatMap(() => pushBus.publishClient(ws, WS_CHANNELS.serverWelcome, welcomeData)),
+        Effect.flatMap((delivered) =>
+          delivered ? Ref.update(clients, (clients) => clients.add(ws)) : Effect.void,
+        ),
+      ),
+    );
 
     ws.on("message", (raw) => {
-      void runPromise(
-        handleMessage(ws, raw).pipe(
-          Effect.catch((error) => Effect.logError("Error handling message", error)),
-        ),
-      );
+      void runPromise(handleMessage(ws, raw).pipe(Effect.ignoreCause({ log: true })));
     });
 
     ws.on("close", () => {
