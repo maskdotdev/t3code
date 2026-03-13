@@ -1,5 +1,6 @@
 import tailwindcss from "@tailwindcss/vite";
-import react from "@vitejs/plugin-react";
+import babel from "@rolldown/plugin-babel";
+import react, { reactCompilerPreset } from "@vitejs/plugin-react";
 import { tanstackRouter } from "@tanstack/router-plugin/vite";
 import { defineConfig } from "vite";
 import pkg from "./package.json" with { type: "json" };
@@ -17,12 +18,9 @@ const buildSourcemap =
 export default defineConfig({
   plugins: [
     tanstackRouter(),
-    react({
-      babel: {
-        // Keep React compiler parsing explicit for workspace files outside the app cwd.
-        parserOpts: { plugins: ["typescript", "jsx"] },
-        plugins: ["babel-plugin-react-compiler"],
-      },
+    react(),
+    babel({
+      presets: [reactCompilerPreset()],
     }),
     tailwindcss(),
   ],
