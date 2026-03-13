@@ -20,7 +20,7 @@ import { page } from "vitest/browser";
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { render } from "vitest-browser-react";
 
-import { useComposerDraftStore } from "../composerDraftStore";
+import { clearPromotedDraftThreads, useComposerDraftStore } from "../composerDraftStore";
 import { isMacPlatform } from "../lib/utils";
 import { getRouter } from "../router";
 import { useStore } from "../store";
@@ -1067,8 +1067,9 @@ describe("ChatView timeline estimator parity (full app)", () => {
       const { syncServerReadModel } = useStore.getState();
       syncServerReadModel(addThreadToSnapshot(fixture.snapshot, newThreadId));
 
-      // Clear the draft now that the server thread exists (mirrors EventRouter behavior).
-      useComposerDraftStore.getState().clearDraftThread(newThreadId);
+      // Clear promoted draft-thread metadata now that the server thread exists
+      // (mirrors EventRouter behavior without dropping composer draft settings).
+      clearPromotedDraftThreads(new Set([newThreadId]));
 
       // The route should still be on the new thread — not redirected away.
       await waitForURL(
@@ -1186,7 +1187,7 @@ describe("ChatView timeline estimator parity (full app)", () => {
 
       const { syncServerReadModel } = useStore.getState();
       syncServerReadModel(addThreadToSnapshot(fixture.snapshot, promotedThreadId));
-      useComposerDraftStore.getState().clearDraftThread(promotedThreadId);
+      clearPromotedDraftThreads(new Set([promotedThreadId]));
 
       const useMetaForMod = isMacPlatform(navigator.platform);
       window.dispatchEvent(

@@ -1287,11 +1287,39 @@ export function useComposerThreadDraft(threadId: ThreadId): ComposerThreadDraftS
  * to `/` caused by a gap where neither draft nor server thread exists.
  */
 export function clearPromotedDraftThreads(serverThreadIds: ReadonlySet<ThreadId>): void {
-  const store = useComposerDraftStore.getState();
-  const draftThreadIds = Object.keys(store.draftThreadsByThreadId) as ThreadId[];
-  for (const draftId of draftThreadIds) {
-    if (serverThreadIds.has(draftId)) {
-      store.clearDraftThread(draftId);
+  useComposerDraftStore.setState((state) => {
+    let nextDraftThreadsByThreadId = state.draftThreadsByThreadId;
+    let nextProjectDraftThreadIdByProjectId = state.projectDraftThreadIdByProjectId;
+    let changed = false;
+
+    for (const draftId of Object.keys(state.draftThreadsByThreadId) as ThreadId[]) {
+      if (!serverThreadIds.has(draftId)) {
+        continue;
+      }
+
+      if (!changed) {
+        nextDraftThreadsByThreadId = { ...state.draftThreadsByThreadId };
+        nextProjectDraftThreadIdByProjectId = { ...state.projectDraftThreadIdByProjectId };
+        changed = true;
+      }
+
+      delete nextDraftThreadsByThreadId[draftId];
+      for (const [projectId, mappedThreadId] of Object.entries(
+        nextProjectDraftThreadIdByProjectId,
+      )) {
+        if (mappedThreadId === draftId) {
+          delete nextProjectDraftThreadIdByProjectId[projectId as ProjectId];
+        }
+      }
     }
-  }
+
+    if (!changed) {
+      return state;
+    }
+
+    return {
+      draftThreadsByThreadId: nextDraftThreadsByThreadId,
+      projectDraftThreadIdByProjectId: nextProjectDraftThreadIdByProjectId,
+    };
+  });
 }

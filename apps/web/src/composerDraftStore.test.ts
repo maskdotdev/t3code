@@ -2,6 +2,7 @@ import { ProjectId, ThreadId } from "@t3tools/contracts";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import {
+  clearPromotedDraftThreads,
   type ComposerImageAttachment,
   createDebouncedStorage,
   useComposerDraftStore,
@@ -264,6 +265,18 @@ describe("composerDraftStore project draft thread mapping", () => {
     store.clearDraftThread(threadId);
     expect(useComposerDraftStore.getState().getDraftThreadByProjectId(projectId)).toBeNull();
     expect(useComposerDraftStore.getState().getDraftThread(threadId)).toBeNull();
+  });
+
+  it("preserves composer draft settings when a draft thread is promoted", () => {
+    const store = useComposerDraftStore.getState();
+    store.setProjectDraftThreadId(projectId, threadId);
+    store.setEffort(threadId, "low");
+
+    clearPromotedDraftThreads(new Set([threadId]));
+
+    expect(useComposerDraftStore.getState().getDraftThreadByProjectId(projectId)).toBeNull();
+    expect(useComposerDraftStore.getState().getDraftThread(threadId)).toBeNull();
+    expect(useComposerDraftStore.getState().draftsByThreadId[threadId]?.effort).toBe("low");
   });
 
   it("updates branch context on an existing draft thread", () => {
