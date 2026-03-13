@@ -18,6 +18,7 @@ export interface ExtractedTerminalContexts {
   promptText: string;
   contextCount: number;
   previewTitle: string | null;
+  contexts: ParsedTerminalContextEntry[];
 }
 
 export interface DisplayedUserMessageState {
@@ -25,6 +26,12 @@ export interface DisplayedUserMessageState {
   copyText: string;
   contextCount: number;
   previewTitle: string | null;
+  contexts: ParsedTerminalContextEntry[];
+}
+
+export interface ParsedTerminalContextEntry {
+  header: string;
+  body: string;
 }
 
 const TRAILING_TERMINAL_CONTEXT_BLOCK_PATTERN =
@@ -153,6 +160,7 @@ export function extractTrailingTerminalContexts(prompt: string): ExtractedTermin
       promptText: prompt,
       contextCount: 0,
       previewTitle: null,
+      contexts: [],
     };
   }
   const promptText = prompt.slice(0, match.index).replace(/\n+$/, "");
@@ -166,6 +174,7 @@ export function extractTrailingTerminalContexts(prompt: string): ExtractedTermin
             .map(({ header, body }) => (body.length > 0 ? `${header}\n${body}` : header))
             .join("\n\n")
         : null,
+    contexts: parsedContexts,
   };
 }
 
@@ -176,11 +185,12 @@ export function deriveDisplayedUserMessageState(prompt: string): DisplayedUserMe
     copyText: prompt,
     contextCount: extractedContexts.contextCount,
     previewTitle: extractedContexts.previewTitle,
+    contexts: extractedContexts.contexts,
   };
 }
 
-function parseTerminalContextEntries(block: string): Array<{ header: string; body: string }> {
-  const entries: Array<{ header: string; body: string }> = [];
+function parseTerminalContextEntries(block: string): ParsedTerminalContextEntry[] {
+  const entries: ParsedTerminalContextEntry[] = [];
   let current: { header: string; bodyLines: string[] } | null = null;
 
   const commitCurrent = () => {

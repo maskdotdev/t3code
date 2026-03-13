@@ -1,5 +1,14 @@
 import { type MessageId, type TurnId } from "@t3tools/contracts";
-import { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import {
+  memo,
+  useCallback,
+  useEffect,
+  useLayoutEffect,
+  useMemo,
+  useRef,
+  useState,
+  type ReactNode,
+} from "react";
 import {
   measureElement as measureVirtualElement,
   type VirtualItem,
@@ -34,10 +43,17 @@ import { DiffStatLabel, hasNonZeroStat } from "./DiffStatLabel";
 import { MessageCopyButton } from "./MessageCopyButton";
 import { computeMessageDurationStart, normalizeCompactToolLabel } from "./MessagesTimeline.logic";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
-import { deriveDisplayedUserMessageState } from "~/lib/terminalContext";
+import {
+  deriveDisplayedUserMessageState,
+  type ParsedTerminalContextEntry,
+} from "~/lib/terminalContext";
 import { cn } from "~/lib/utils";
 import { type TimestampFormat } from "../../appSettings";
 import { formatTimestamp } from "../../timestampFormat";
+import {
+  buildInlineTerminalContextText,
+  formatInlineTerminalContextLabel,
+} from "./userMessageTerminalContexts";
 
 const MAX_VISIBLE_WORK_LOG_ENTRIES = 6;
 const ALWAYS_UNVIRTUALIZED_TAIL_ROWS = 8;
@@ -340,6 +356,7 @@ export const MessagesTimeline = memo(function MessagesTimeline({
         (() => {
           const userImages = row.message.attachments ?? [];
           const displayedUserMessage = deriveDisplayedUserMessageState(row.message.text);
+          const terminalContexts = displayedUserMessage.contexts;
           const canRevertAgentWork = revertTurnCountByUserMessageId.has(row.message.id);
           return (
             <div className="flex justify-end">
@@ -381,10 +398,12 @@ export const MessagesTimeline = memo(function MessagesTimeline({
                     )}
                   </div>
                 )}
-                {displayedUserMessage.visibleText && (
-                  <pre className="whitespace-pre-wrap wrap-break-word font-mono text-sm leading-relaxed text-foreground">
-                    {displayedUserMessage.visibleText}
-                  </pre>
+                {(displayedUserMessage.visibleText.trim().length > 0 ||
+                  terminalContexts.length > 0) && (
+                  <UserMessageBody
+                    text={displayedUserMessage.visibleText}
+                    terminalContexts={terminalContexts}
+                  />
                 )}
                 <div className="mt-1.5 flex items-center justify-end gap-2">
                   <div className="flex items-center gap-1.5 opacity-0 transition-opacity duration-200 focus-within:opacity-100 group-hover:opacity-100">
@@ -404,33 +423,6 @@ export const MessagesTimeline = memo(function MessagesTimeline({
                       </Button>
                     )}
                   </div>
-                  {displayedUserMessage.contextCount > 0 && (
-                    <Tooltip>
-                      <TooltipTrigger
-                        render={
-                          <button
-                            type="button"
-                            className="inline-flex items-center gap-1 text-muted-foreground/50"
-                            aria-label={`${displayedUserMessage.contextCount} terminal context ${
-                              displayedUserMessage.contextCount === 1 ? "selection" : "selections"
-                            }`}
-                            title={displayedUserMessage.previewTitle ?? undefined}
-                          >
-                            <TerminalIcon className="size-3" />
-                            <span className="text-[10px] font-medium">
-                              {displayedUserMessage.contextCount}
-                            </span>
-                          </button>
-                        }
-                      />
-                      <TooltipPopup
-                        side="top"
-                        className="max-w-80 whitespace-pre-wrap leading-tight"
-                      >
-                        {displayedUserMessage.previewTitle}
-                      </TooltipPopup>
-                    </Tooltip>
-                  )}
                   <p className="text-right text-[10px] text-muted-foreground/30">
                     {formatTimestamp(row.message.createdAt, timestampFormat)}
                   </p>
@@ -667,6 +659,76 @@ function formatMessageMeta(
   if (!duration) return formatTimestamp(createdAt, timestampFormat);
   return `${formatTimestamp(createdAt, timestampFormat)} • ${duration}`;
 }
+
+const UserMessageTerminalContextInlineLabel = memo(
+  function UserMessageTerminalContextInlineLabel(props: { context: ParsedTerminalContextEntry }) {
+    const label =
+      props.context.body.length > 0
+        ? `${props.context.header}\n${props.context.body}`
+        : props.context.header;
+
+    return (
+      <Tooltip>
+        <TooltipTrigger
+          render={
+            <span className="font-medium text-foreground/88">
+              {formatInlineTerminalContextLabel(props.context.header)}
+            </span>
+          }
+        />
+        <TooltipPopup side="top" className="max-w-80 whitespace-pre-wrap leading-tight">
+          {label}
+        </TooltipPopup>
+      </Tooltip>
+    );
+  },
+);
+
+const UserMessageBody = memo(function UserMessageBody(props: {
+  text: string;
+  terminalContexts: ParsedTerminalContextEntry[];
+}) {
+  if (props.terminalContexts.length > 0) {
+    const inlinePrefix = buildInlineTerminalContextText(props.terminalContexts);
+    const inlineNodes: ReactNode[] = [];
+
+    for (const context of props.terminalContexts) {
+      inlineNodes.push(
+        <UserMessageTerminalContextInlineLabel
+          key={`user-terminal-context-inline:${context.header}`}
+          context={context}
+        />,
+      );
+      inlineNodes.push(
+        <span key={`user-terminal-context-inline-space:${context.header}`} aria-hidden="true">
+          {" "}
+        </span>,
+      );
+    }
+
+    if (props.text.length > 0) {
+      inlineNodes.push(<span key="user-message-terminal-context-inline-text">{props.text}</span>);
+    } else if (inlinePrefix.length === 0) {
+      return null;
+    }
+
+    return (
+      <div className="wrap-break-word whitespace-pre-wrap font-mono text-sm leading-relaxed text-foreground">
+        {inlineNodes}
+      </div>
+    );
+  }
+
+  if (props.text.length === 0) {
+    return null;
+  }
+
+  return (
+    <pre className="whitespace-pre-wrap wrap-break-word font-mono text-sm leading-relaxed text-foreground">
+      {props.text}
+    </pre>
+  );
+});
 
 function workToneIcon(tone: TimelineWorkEntry["tone"]): {
   icon: LucideIcon;

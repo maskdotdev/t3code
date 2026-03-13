@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import { appendTerminalContextsToPrompt } from "../lib/terminalContext";
+import { buildInlineTerminalContextText } from "./chat/userMessageTerminalContexts";
 import { estimateTimelineMessageHeight } from "./timelineHeight";
 
 describe("estimateTimelineMessageHeight", () => {
@@ -76,7 +77,7 @@ describe("estimateTimelineMessageHeight", () => {
     ).toBe(162);
   });
 
-  it("ignores trailing terminal context blocks when sizing user messages", () => {
+  it("adds terminal context chrome without counting the hidden block as message text", () => {
     const prompt = appendTerminalContextsToPrompt("Investigate this", [
       {
         terminalId: "default",
@@ -100,7 +101,7 @@ describe("estimateTimelineMessageHeight", () => {
     ).toBe(
       estimateTimelineMessageHeight({
         role: "user",
-        text: "Investigate this",
+        text: `${buildInlineTerminalContextText([{ header: "Terminal 1 lines 40-43" }])} Investigate this`,
       }),
     );
   });

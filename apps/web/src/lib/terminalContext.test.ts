@@ -70,6 +70,12 @@ describe("terminalContext", () => {
       promptText: "Investigate this",
       contextCount: 1,
       previewTitle: "Terminal 1 lines 12-13\n12 | git status\n13 | On branch main",
+      contexts: [
+        {
+          header: "Terminal 1 lines 12-13",
+          body: "12 | git status\n13 | On branch main",
+        },
+      ],
     });
   });
 
@@ -80,6 +86,12 @@ describe("terminalContext", () => {
       copyText: prompt,
       contextCount: 1,
       previewTitle: "Terminal 1 lines 12-13\n12 | git status\n13 | On branch main",
+      contexts: [
+        {
+          header: "Terminal 1 lines 12-13",
+          body: "12 | git status\n13 | On branch main",
+        },
+      ],
     });
   });
 
@@ -88,6 +100,7 @@ describe("terminalContext", () => {
       promptText: "No attached context",
       contextCount: 0,
       previewTitle: null,
+      contexts: [],
     });
   });
 
