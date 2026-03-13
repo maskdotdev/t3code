@@ -55,6 +55,7 @@ import {
   insertInlineTerminalContextPlaceholder,
   removeInlineTerminalContextPlaceholder,
 } from "../../lib/terminalContext";
+import { type DiffContextCommentDraft } from "../../lib/diffContextComments";
 import {
   shouldUseCompactComposerPrimaryActions,
   shouldUseCompactComposerFooter,
@@ -67,6 +68,7 @@ import { CompactComposerControlsMenu } from "./CompactComposerControlsMenu";
 import { ComposerPrimaryActions } from "./ComposerPrimaryActions";
 import { ComposerPendingApprovalPanel } from "./ComposerPendingApprovalPanel";
 import { ComposerPendingUserInputPanel } from "./ComposerPendingUserInputPanel";
+import { ComposerPendingDiffComments } from "./ComposerPendingDiffComments";
 import { ComposerPlanFollowUpBanner } from "./ComposerPlanFollowUpBanner";
 import { resolveComposerMenuActiveItemId } from "./composerMenuHighlight";
 import { searchSlashCommandItems } from "./composerSlashCommandSearch";
@@ -339,7 +341,9 @@ export interface ChatComposerHandle {
   getSendContext: () => {
     prompt: string;
     images: ComposerImageAttachment[];
+    persistedAttachments: PersistedComposerImageAttachment[];
     terminalContexts: TerminalContextDraft[];
+    diffContextComments: DiffContextCommentDraft[];
     selectedPromptEffort: string | null;
     selectedModelOptionsForDispatch: unknown;
     selectedModelSelection: ModelSelection;
@@ -537,6 +541,7 @@ export const ChatComposer = memo(
     const prompt = composerDraft.prompt;
     const composerImages = composerDraft.images;
     const composerTerminalContexts = composerDraft.terminalContexts;
+    const pendingDiffContextComments = composerDraft.diffContextComments;
     const nonPersistedComposerImageIds = composerDraft.nonPersistedImageIds;
 
     const setComposerDraftPrompt = useComposerDraftStore((store) => store.setPrompt);
@@ -554,6 +559,9 @@ export const ChatComposer = memo(
     );
     const clearComposerDraftPersistedAttachments = useComposerDraftStore(
       (store) => store.clearPersistedAttachments,
+    );
+    const clearComposerDraftDiffContextComments = useComposerDraftStore(
+      (store) => store.clearDiffContextComments,
     );
     const syncComposerDraftPersistedAttachments = useComposerDraftStore(
       (store) => store.syncPersistedAttachments,
@@ -672,15 +680,22 @@ export const ChatComposer = memo(
     // ------------------------------------------------------------------
     // Derived: composer send state
     // ------------------------------------------------------------------
-    const composerSendState = useMemo(
-      () =>
-        deriveComposerSendState({
-          prompt,
-          imageCount: composerImages.length,
-          terminalContexts: composerTerminalContexts,
-        }),
-      [composerImages.length, composerTerminalContexts, prompt],
-    );
+    const composerSendState = useMemo(() => {
+      const sendState = deriveComposerSendState({
+        prompt,
+        imageCount: composerImages.length,
+        terminalContexts: composerTerminalContexts,
+      });
+      return {
+        ...sendState,
+        hasSendableContent: sendState.hasSendableContent || pendingDiffContextComments.length > 0,
+      };
+    }, [
+      composerImages.length,
+      composerTerminalContexts,
+      pendingDiffContextComments.length,
+      prompt,
+    ]);
 
     // ------------------------------------------------------------------
     // Derived: composer trigger / menu
@@ -1651,7 +1666,9 @@ export const ChatComposer = memo(
         getSendContext: () => ({
           prompt: promptRef.current,
           images: composerImagesRef.current,
+          persistedAttachments: composerDraft.persistedAttachments,
           terminalContexts: composerTerminalContextsRef.current,
+          diffContextComments: pendingDiffContextComments,
           selectedPromptEffort,
           selectedModelOptionsForDispatch,
           selectedModelSelection,
@@ -1662,10 +1679,12 @@ export const ChatComposer = memo(
       }),
       [
         activeThread,
+        composerDraft.persistedAttachments,
         composerDraftTarget,
         composerCursor,
         composerTerminalContexts,
         insertComposerDraftTerminalContext,
+        pendingDiffContextComments,
         promptRef,
         composerImagesRef,
         composerTerminalContextsRef,
@@ -1760,8 +1779,12 @@ export const ChatComposer = memo(
 
               {!isComposerApprovalState &&
                 pendingUserInputs.length === 0 &&
-                composerImages.length > 0 && (
+                (pendingDiffContextComments.length > 0 || composerImages.length > 0) && (
                   <div className="mb-3 flex flex-wrap gap-2">
+                    <ComposerPendingDiffComments
+                      comments={pendingDiffContextComments}
+                      onClearAll={() => clearComposerDraftDiffContextComments(composerDraftTarget)}
+                    />
                     {composerImages.map((image) => (
                       <div
                         key={image.id}

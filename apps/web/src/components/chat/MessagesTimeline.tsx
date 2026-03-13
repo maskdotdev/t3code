@@ -14,6 +14,7 @@ import { LegendList, type LegendListRef } from "@legendapp/list/react";
 import { deriveTimelineEntries, formatElapsed } from "../../session-logic";
 import { type TurnDiffSummary } from "../../types";
 import { summarizeTurnDiffStats } from "../../lib/turnDiffTree";
+import { extractTrailingDiffContextComments } from "../../lib/diffContextComments";
 import ChatMarkdown from "../ChatMarkdown";
 import {
   BotIcon,
@@ -22,6 +23,7 @@ import {
   EyeIcon,
   GlobeIcon,
   HammerIcon,
+  MessageSquareIcon,
   type LucideIcon,
   SquarePenIcon,
   TerminalIcon,
@@ -301,7 +303,10 @@ function TimelineRowContent({ row }: { row: TimelineRow }) {
         row.message.role === "user" &&
         (() => {
           const userImages = row.message.attachments ?? [];
-          const displayedUserMessage = deriveDisplayedUserMessageState(row.message.text);
+          const extractedDiffComments = extractTrailingDiffContextComments(row.message.text);
+          const displayedUserMessage = deriveDisplayedUserMessageState(
+            extractedDiffComments.promptText,
+          );
           const terminalContexts = displayedUserMessage.contexts;
           const canRevertAgentWork = typeof row.revertTurnCount === "number";
           return (
@@ -367,6 +372,33 @@ function TimelineRowContent({ row }: { row: TimelineRow }) {
                       </Button>
                     )}
                   </div>
+                  {extractedDiffComments.commentCount > 0 && (
+                    <Tooltip>
+                      <TooltipTrigger
+                        render={
+                          <button
+                            type="button"
+                            className="inline-flex items-center gap-1 text-muted-foreground/50"
+                            aria-label={`${extractedDiffComments.commentCount} diff context comment${
+                              extractedDiffComments.commentCount === 1 ? "" : "s"
+                            }`}
+                            title={extractedDiffComments.previewTitle ?? undefined}
+                          >
+                            <MessageSquareIcon className="size-3" />
+                            <span className="text-[10px] font-medium">
+                              {extractedDiffComments.commentCount}
+                            </span>
+                          </button>
+                        }
+                      />
+                      <TooltipPopup
+                        side="top"
+                        className="max-w-72 whitespace-pre-wrap leading-tight"
+                      >
+                        {extractedDiffComments.previewTitle}
+                      </TooltipPopup>
+                    </Tooltip>
+                  )}
                   <p className="text-right text-xs text-muted-foreground/50">
                     {formatTimestamp(row.message.createdAt, ctx.timestampFormat)}
                   </p>

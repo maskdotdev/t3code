@@ -16,6 +16,7 @@ import {
   type ScopedProjectRef,
   type ScopedThreadRef,
   ThreadId,
+  TurnId,
 } from "@t3tools/contracts";
 import {
   parseScopedProjectKey,
@@ -38,6 +39,10 @@ import {
   ensureInlineTerminalContextPlaceholders,
   normalizeTerminalContextText,
 } from "./lib/terminalContext";
+import {
+  type DiffContextCommentDraft,
+  type DiffContextCommentDraftUpdate,
+} from "./lib/diffContextComments";
 import { create } from "zustand";
 import { createJSONStorage, persist } from "zustand/middleware";
 import { useShallow } from "zustand/react/shallow";
@@ -60,6 +65,10 @@ const composerDebouncedStorage = createDebouncedStorage(
   typeof localStorage !== "undefined" ? localStorage : createMemoryStorage(),
   COMPOSER_PERSIST_DEBOUNCE_MS,
 );
+
+export function flushComposerDraftStorage(): void {
+  composerDebouncedStorage.flush();
+}
 
 // Flush pending composer draft writes before page unload to prevent data loss.
 if (typeof window !== "undefined" && typeof window.addEventListener === "function") {
@@ -93,10 +102,23 @@ const PersistedTerminalContextDraft = Schema.Struct({
 });
 type PersistedTerminalContextDraft = typeof PersistedTerminalContextDraft.Type;
 
+const PersistedDiffContextCommentDraft = Schema.Struct({
+  id: Schema.String,
+  threadId: ThreadId,
+  turnId: Schema.NullOr(TurnId),
+  filePath: Schema.String,
+  lineStart: Schema.Number,
+  lineEnd: Schema.Number,
+  side: Schema.Literals(["additions", "deletions"]),
+  body: Schema.String,
+  createdAt: Schema.String,
+});
+
 const PersistedComposerThreadDraftState = Schema.Struct({
   prompt: Schema.String,
   attachments: Schema.Array(PersistedComposerImageAttachment),
   terminalContexts: Schema.optionalKey(Schema.Array(PersistedTerminalContextDraft)),
+  diffContextComments: Schema.optionalKey(Schema.Array(PersistedDiffContextCommentDraft)),
   modelSelectionByProvider: Schema.optionalKey(
     Schema.Record(ProviderKind, Schema.optionalKey(ModelSelection)),
   ),
@@ -202,6 +224,7 @@ export interface ComposerThreadDraftState {
   nonPersistedImageIds: string[];
   persistedAttachments: PersistedComposerImageAttachment[];
   terminalContexts: TerminalContextDraft[];
+  diffContextComments: DiffContextCommentDraft[];
   modelSelectionByProvider: Partial<Record<ProviderKind, ModelSelection>>;
   activeProvider: ProviderKind | null;
   runtimeMode: RuntimeMode | null;
@@ -369,10 +392,31 @@ interface ComposerDraftStoreState {
   addTerminalContexts: (threadRef: ComposerThreadTarget, contexts: TerminalContextDraft[]) => void;
   removeTerminalContext: (threadRef: ComposerThreadTarget, contextId: string) => void;
   clearTerminalContexts: (threadRef: ComposerThreadTarget) => void;
+  addDiffContextComment: (
+    threadRef: ComposerThreadTarget,
+    comment: DiffContextCommentDraft,
+  ) => void;
+  updateDiffContextComment: (
+    threadRef: ComposerThreadTarget,
+    commentId: string,
+    updates: DiffContextCommentDraftUpdate,
+  ) => void;
+  removeDiffContextComment: (threadRef: ComposerThreadTarget, commentId: string) => void;
+  clearDiffContextComments: (threadRef: ComposerThreadTarget) => void;
   clearPersistedAttachments: (threadRef: ComposerThreadTarget) => void;
   syncPersistedAttachments: (
     threadRef: ComposerThreadTarget,
     attachments: PersistedComposerImageAttachment[],
+  ) => void;
+  restoreComposerSendContent: (
+    threadRef: ComposerThreadTarget,
+    snapshot: {
+      prompt: string;
+      images: ComposerImageAttachment[];
+      persistedAttachments: PersistedComposerImageAttachment[];
+      terminalContexts: TerminalContextDraft[];
+      diffContextComments: DiffContextCommentDraft[];
+    },
   ) => void;
   clearComposerContent: (threadRef: ComposerThreadTarget) => void;
 }
@@ -424,9 +468,11 @@ const EMPTY_IMAGES: ComposerImageAttachment[] = [];
 const EMPTY_IDS: string[] = [];
 const EMPTY_PERSISTED_ATTACHMENTS: PersistedComposerImageAttachment[] = [];
 const EMPTY_TERMINAL_CONTEXTS: TerminalContextDraft[] = [];
+const EMPTY_DIFF_CONTEXT_COMMENTS: DiffContextCommentDraft[] = [];
 Object.freeze(EMPTY_IMAGES);
 Object.freeze(EMPTY_IDS);
 Object.freeze(EMPTY_PERSISTED_ATTACHMENTS);
+Object.freeze(EMPTY_DIFF_CONTEXT_COMMENTS);
 const EMPTY_MODEL_SELECTION_BY_PROVIDER: Partial<Record<ProviderKind, ModelSelection>> =
   Object.freeze({});
 const EMPTY_COMPOSER_DRAFT_MODEL_STATE = Object.freeze<ComposerDraftModelState>({
@@ -440,6 +486,7 @@ const EMPTY_THREAD_DRAFT = Object.freeze<ComposerThreadDraftState>({
   nonPersistedImageIds: EMPTY_IDS,
   persistedAttachments: EMPTY_PERSISTED_ATTACHMENTS,
   terminalContexts: EMPTY_TERMINAL_CONTEXTS,
+  diffContextComments: EMPTY_DIFF_CONTEXT_COMMENTS,
   modelSelectionByProvider: EMPTY_MODEL_SELECTION_BY_PROVIDER,
   activeProvider: null,
   runtimeMode: null,
@@ -453,6 +500,7 @@ function createEmptyThreadDraft(): ComposerThreadDraftState {
     nonPersistedImageIds: [],
     persistedAttachments: [],
     terminalContexts: [],
+    diffContextComments: [],
     modelSelectionByProvider: {},
     activeProvider: null,
     runtimeMode: null,
@@ -517,12 +565,59 @@ function normalizeTerminalContextsForThread(
   return normalizedContexts;
 }
 
+function normalizeDiffContextCommentDraft(value: unknown): DiffContextCommentDraft | null {
+  if (!value || typeof value !== "object") {
+    return null;
+  }
+  const candidate = value as Record<string, unknown>;
+  const id = candidate.id;
+  const threadId = candidate.threadId;
+  const turnId = candidate.turnId;
+  const filePath = candidate.filePath;
+  const lineStart = candidate.lineStart;
+  const lineEnd = candidate.lineEnd;
+  const side = candidate.side;
+  const body = candidate.body;
+  const createdAt = candidate.createdAt;
+  if (
+    typeof id !== "string" ||
+    id.length === 0 ||
+    typeof threadId !== "string" ||
+    threadId.length === 0 ||
+    !(turnId === null || (typeof turnId === "string" && turnId.length > 0)) ||
+    typeof filePath !== "string" ||
+    filePath.length === 0 ||
+    typeof lineStart !== "number" ||
+    !Number.isFinite(lineStart) ||
+    typeof lineEnd !== "number" ||
+    !Number.isFinite(lineEnd) ||
+    (side !== "additions" && side !== "deletions") ||
+    typeof body !== "string" ||
+    typeof createdAt !== "string" ||
+    createdAt.length === 0
+  ) {
+    return null;
+  }
+  return {
+    id,
+    threadId: ThreadId.make(threadId),
+    turnId: turnId === null ? null : TurnId.make(turnId),
+    filePath,
+    lineStart,
+    lineEnd,
+    side,
+    body,
+    createdAt,
+  };
+}
+
 function shouldRemoveDraft(draft: ComposerThreadDraftState): boolean {
   return (
     draft.prompt.length === 0 &&
     draft.images.length === 0 &&
     draft.persistedAttachments.length === 0 &&
     draft.terminalContexts.length === 0 &&
+    draft.diffContextComments.length === 0 &&
     Object.keys(draft.modelSelectionByProvider).length === 0 &&
     draft.activeProvider === null &&
     draft.runtimeMode === null &&
@@ -1387,6 +1482,12 @@ function normalizePersistedDraftsByThreadId(
           return normalized ? [normalized] : [];
         })
       : [];
+    const diffContextComments = Array.isArray(draftCandidate.diffContextComments)
+      ? draftCandidate.diffContextComments.flatMap((entry) => {
+          const normalized = normalizeDiffContextCommentDraft(entry);
+          return normalized ? [normalized] : [];
+        })
+      : [];
     const runtimeMode = isRuntimeMode(draftCandidate.runtimeMode)
       ? draftCandidate.runtimeMode
       : null;
@@ -1450,6 +1551,7 @@ function normalizePersistedDraftsByThreadId(
       promptCandidate.length === 0 &&
       attachments.length === 0 &&
       terminalContexts.length === 0 &&
+      diffContextComments.length === 0 &&
       !hasModelData &&
       !runtimeMode &&
       !interactionMode
@@ -1472,6 +1574,7 @@ function normalizePersistedDraftsByThreadId(
       prompt,
       attachments,
       ...(terminalContexts.length > 0 ? { terminalContexts } : {}),
+      ...(diffContextComments.length > 0 ? { diffContextComments } : {}),
       ...(hasModelData ? { modelSelectionByProvider, activeProvider } : {}),
       ...(runtimeMode ? { runtimeMode } : {}),
       ...(interactionMode ? { interactionMode } : {}),
@@ -1549,6 +1652,7 @@ function partializeComposerDraftStoreState(
       draft.prompt.length === 0 &&
       draft.persistedAttachments.length === 0 &&
       draft.terminalContexts.length === 0 &&
+      draft.diffContextComments.length === 0 &&
       !hasModelData &&
       draft.runtimeMode === null &&
       draft.interactionMode === null
@@ -1570,6 +1674,9 @@ function partializeComposerDraftStoreState(
               lineEnd: context.lineEnd,
             })),
           }
+        : {}),
+      ...(draft.diffContextComments.length > 0
+        ? { diffContextComments: draft.diffContextComments }
         : {}),
       ...(hasModelData
         ? {
@@ -1798,6 +1905,7 @@ function toHydratedThreadDraft(
         ...context,
         text: "",
       })) ?? [],
+    diffContextComments: [...(persistedDraft.diffContextComments ?? [])],
     modelSelectionByProvider,
     activeProvider,
     runtimeMode: persistedDraft.runtimeMode ?? null,
@@ -2706,6 +2814,104 @@ const composerDraftStore = create<ComposerDraftStoreState>()(
             return { draftsByThreadKey: nextDraftsByThreadKey };
           });
         },
+        addDiffContextComment: (threadRef, comment) => {
+          const threadKey = resolveComposerDraftKey(get(), threadRef) ?? "";
+          if (threadKey.length === 0) {
+            return;
+          }
+          set((state) => {
+            const existing = state.draftsByThreadKey[threadKey] ?? createEmptyThreadDraft();
+            return {
+              draftsByThreadKey: {
+                ...state.draftsByThreadKey,
+                [threadKey]: {
+                  ...existing,
+                  diffContextComments: [...existing.diffContextComments, comment],
+                },
+              },
+            };
+          });
+        },
+        updateDiffContextComment: (threadRef, commentId, updates) => {
+          const threadKey = resolveComposerDraftKey(get(), threadRef) ?? "";
+          if (threadKey.length === 0 || commentId.length === 0) {
+            return;
+          }
+          set((state) => {
+            const current = state.draftsByThreadKey[threadKey];
+            if (!current) {
+              return state;
+            }
+            const commentIndex = current.diffContextComments.findIndex(
+              (comment) => comment.id === commentId,
+            );
+            if (commentIndex === -1) {
+              return state;
+            }
+            const nextDiffContextComments = current.diffContextComments.slice();
+            nextDiffContextComments[commentIndex] = {
+              ...nextDiffContextComments[commentIndex]!,
+              body: updates.body,
+            };
+            return {
+              draftsByThreadKey: {
+                ...state.draftsByThreadKey,
+                [threadKey]: {
+                  ...current,
+                  diffContextComments: nextDiffContextComments,
+                },
+              },
+            };
+          });
+        },
+        removeDiffContextComment: (threadRef, commentId) => {
+          const threadKey = resolveComposerDraftKey(get(), threadRef) ?? "";
+          if (threadKey.length === 0 || commentId.length === 0) {
+            return;
+          }
+          set((state) => {
+            const current = state.draftsByThreadKey[threadKey];
+            if (!current) {
+              return state;
+            }
+            const nextDraft: ComposerThreadDraftState = {
+              ...current,
+              diffContextComments: current.diffContextComments.filter(
+                (comment) => comment.id !== commentId,
+              ),
+            };
+            const nextDraftsByThreadKey = { ...state.draftsByThreadKey };
+            if (shouldRemoveDraft(nextDraft)) {
+              delete nextDraftsByThreadKey[threadKey];
+            } else {
+              nextDraftsByThreadKey[threadKey] = nextDraft;
+            }
+            return { draftsByThreadKey: nextDraftsByThreadKey };
+          });
+        },
+        clearDiffContextComments: (threadRef) => {
+          const threadKey = resolveComposerDraftKey(get(), threadRef) ?? "";
+          if (threadKey.length === 0) {
+            return;
+          }
+          set((state) => {
+            const current = state.draftsByThreadKey[threadKey];
+            if (!current || current.diffContextComments.length === 0) {
+              return state;
+            }
+            const nextDraft: ComposerThreadDraftState = {
+              ...current,
+              diffContextComments: [],
+            };
+            const nextDraftsByThreadKey = { ...state.draftsByThreadKey };
+            if (shouldRemoveDraft(nextDraft)) {
+              delete nextDraftsByThreadKey[threadKey];
+            } else {
+              nextDraftsByThreadKey[threadKey] = nextDraft;
+            }
+            return { draftsByThreadKey: nextDraftsByThreadKey };
+          });
+        },
         clearPersistedAttachments: (threadRef) => {
           const threadKey = resolveComposerDraftKey(get(), threadRef) ?? "";
           if (threadKey.length === 0) {
@@ -2761,6 +2967,39 @@ const composerDraftStore = create<ComposerDraftStoreState>()(
             verifyPersistedAttachments(threadKey, attachments, set);
           });
         },
+        restoreComposerSendContent: (threadRef, snapshot) => {
+          const threadKey = resolveComposerDraftKey(get(), threadRef) ?? "";
+          if (threadKey.length === 0) {
+            return;
+          }
+          set((state) => {
+            const current = state.draftsByThreadKey[threadKey] ?? createEmptyThreadDraft();
+            const persistedAttachmentIds = new Set(
+              snapshot.persistedAttachments.map((attachment) => attachment.id),
+            );
+            const imageIds = new Set(snapshot.images.map((image) => image.id));
+            const nextDraft: ComposerThreadDraftState = {
+              ...current,
+              prompt: snapshot.prompt,
+              images: [...snapshot.images],
+              nonPersistedImageIds: snapshot.images
+                .map((image) => image.id)
+                .filter((imageId) => !persistedAttachmentIds.has(imageId)),
+              persistedAttachments: snapshot.persistedAttachments.filter((attachment) =>
+                imageIds.has(attachment.id),
+              ),
+              terminalContexts: [...snapshot.terminalContexts],
+              diffContextComments: [...snapshot.diffContextComments],
+            };
+            const nextDraftsByThreadKey = { ...state.draftsByThreadKey };
+            if (shouldRemoveDraft(nextDraft)) {
+              delete nextDraftsByThreadKey[threadKey];
+            } else {
+              nextDraftsByThreadKey[threadKey] = nextDraft;
+            }
+            return { draftsByThreadKey: nextDraftsByThreadKey };
+          });
+        },
         clearComposerContent: (threadRef) => {
           const threadKey = resolveComposerDraftKey(get(), threadRef) ?? "";
           if (threadKey.length === 0) {
@@ -2778,6 +3017,7 @@ const composerDraftStore = create<ComposerDraftStoreState>()(
               nonPersistedImageIds: [],
               persistedAttachments: [],
               terminalContexts: [],
+              diffContextComments: [],
             };
             const nextDraftsByThreadKey = { ...state.draftsByThreadKey };
             if (shouldRemoveDraft(nextDraft)) {
