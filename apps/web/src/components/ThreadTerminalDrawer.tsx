@@ -109,6 +109,10 @@ function terminalThemeFromApp(): ITheme {
   };
 }
 
+function isTerminalSelectionActionTarget(target: EventTarget | null): boolean {
+  return target instanceof Element && target.closest("[data-terminal-selection-action]") !== null;
+}
+
 interface TerminalViewportProps {
   threadId: ThreadId;
   terminalId: string;
@@ -315,10 +319,16 @@ function TerminalViewport({
     });
 
     const handleMouseUp = (event: MouseEvent) => {
+      if (isTerminalSelectionActionTarget(event.target)) {
+        return;
+      }
       selectionPointerRef.current = { x: event.clientX, y: event.clientY };
       window.requestAnimationFrame(updateSelectionAction);
     };
-    const handlePointerDown = () => {
+    const handlePointerDown = (event: PointerEvent) => {
+      if (isTerminalSelectionActionTarget(event.target)) {
+        return;
+      }
       clearSelectionAction();
     };
     mount.addEventListener("mouseup", handleMouseUp);
@@ -505,6 +515,7 @@ function TerminalViewport({
     <div ref={containerRef} className="relative h-full w-full overflow-hidden rounded-[4px]">
       {selectionAction ? (
         <div
+          data-terminal-selection-action
           className="absolute z-20"
           style={{ left: `${selectionAction.left}px`, top: `${selectionAction.top}px` }}
         >
@@ -514,6 +525,7 @@ function TerminalViewport({
               size="xs"
               variant="secondary"
               className="rounded-full px-3"
+              data-terminal-selection-action
               onMouseDown={(event) => {
                 event.preventDefault();
                 event.stopPropagation();
