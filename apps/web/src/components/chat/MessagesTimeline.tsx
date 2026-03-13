@@ -9,15 +9,18 @@ import { deriveTimelineEntries, formatElapsed } from "../../session-logic";
 import { AUTO_SCROLL_BOTTOM_THRESHOLD_PX } from "../../chat-scroll";
 import { type TurnDiffSummary } from "../../types";
 import { summarizeTurnDiffStats } from "../../lib/turnDiffTree";
+import { extractTrailingDiffContextComments } from "../../lib/diffContextComments";
 import ChatMarkdown from "../ChatMarkdown";
 import { Undo2Icon } from "lucide-react";
 import { Button } from "../ui/button";
+import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import { clamp } from "effect/Number";
 import { estimateTimelineMessageHeight } from "../timelineHeight";
 import { buildExpandedImagePreview, ExpandedImagePreview } from "./ExpandedImagePreview";
 import { ProposedPlanCard } from "./ProposedPlanCard";
 import { ChangedFilesTree } from "./ChangedFilesTree";
 import { DiffStatLabel, hasNonZeroStat } from "./DiffStatLabel";
+import { DiffContextCommentsAttachment } from "./DiffContextCommentsAttachment";
 import { MessageCopyButton } from "./MessageCopyButton";
 import { computeMessageDurationStart } from "./MessagesTimeline.logic";
 import { type TimestampFormat } from "../../appSettings";
@@ -365,6 +368,8 @@ export const MessagesTimeline = memo(function MessagesTimeline({
         row.message.role === "user" &&
         (() => {
           const userImages = row.message.attachments ?? [];
+          const extractedDiffComments = extractTrailingDiffContextComments(row.message.text);
+          const visibleUserText = extractedDiffComments.promptText;
           const canRevertAgentWork = revertTurnCountByUserMessageId.has(row.message.id);
           return (
             <div className="flex justify-end">
@@ -406,14 +411,14 @@ export const MessagesTimeline = memo(function MessagesTimeline({
                     )}
                   </div>
                 )}
-                {row.message.text && (
+                {visibleUserText && (
                   <pre className="whitespace-pre-wrap wrap-break-word font-mono text-sm leading-relaxed text-foreground">
-                    {row.message.text}
+                    {visibleUserText}
                   </pre>
                 )}
                 <div className="mt-1.5 flex items-center justify-end gap-2">
                   <div className="flex items-center gap-1.5 opacity-0 transition-opacity duration-200 focus-within:opacity-100 group-hover:opacity-100">
-                    {row.message.text && <MessageCopyButton text={row.message.text} />}
+                    {visibleUserText && <MessageCopyButton text={visibleUserText} />}
                     {canRevertAgentWork && (
                       <Button
                         type="button"
@@ -427,6 +432,25 @@ export const MessagesTimeline = memo(function MessagesTimeline({
                       </Button>
                     )}
                   </div>
+                  {extractedDiffComments.commentCount > 0 && (
+                    <Tooltip>
+                      <TooltipTrigger
+                        render={
+                          <DiffContextCommentsAttachment
+                            commentCount={extractedDiffComments.commentCount}
+                            previewTitle={extractedDiffComments.previewTitle}
+                            className="gap-1.5 rounded-full border-border/50 bg-background/35 px-1.5 py-0.5 text-muted-foreground/65 shadow-none"
+                          />
+                        }
+                      />
+                      <TooltipPopup
+                        side="top"
+                        className="max-w-72 whitespace-pre-wrap leading-tight"
+                      >
+                        {extractedDiffComments.previewTitle}
+                      </TooltipPopup>
+                    </Tooltip>
+                  )}
                   <p className="text-right text-[10px] text-muted-foreground/30">
                     {formatTimestamp(row.message.createdAt, timestampFormat)}
                   </p>
