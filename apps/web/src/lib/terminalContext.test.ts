@@ -4,6 +4,7 @@ import { describe, expect, it } from "vitest";
 import {
   appendTerminalContextsToPrompt,
   buildTerminalContextBlock,
+  deriveDisplayedUserMessageState,
   extractTrailingTerminalContexts,
   formatTerminalContextLabel,
   type TerminalContextDraft,
@@ -66,6 +67,16 @@ describe("terminalContext", () => {
     const prompt = appendTerminalContextsToPrompt("Investigate this", [makeContext()]);
     expect(extractTrailingTerminalContexts(prompt)).toEqual({
       promptText: "Investigate this",
+      contextCount: 1,
+      previewTitle: "Terminal 1 lines 12-13\n12 | git status\n13 | On branch main",
+    });
+  });
+
+  it("derives displayed user message state from terminal context prompts", () => {
+    const prompt = appendTerminalContextsToPrompt("Investigate this", [makeContext()]);
+    expect(deriveDisplayedUserMessageState(prompt)).toEqual({
+      visibleText: "Investigate this",
+      copyText: prompt,
       contextCount: 1,
       previewTitle: "Terminal 1 lines 12-13\n12 | git status\n13 | On branch main",
     });

@@ -20,6 +20,13 @@ export interface ExtractedTerminalContexts {
   previewTitle: string | null;
 }
 
+export interface DisplayedUserMessageState {
+  visibleText: string;
+  copyText: string;
+  contextCount: number;
+  previewTitle: string | null;
+}
+
 const TRAILING_TERMINAL_CONTEXT_BLOCK_PATTERN =
   /\n*<terminal_context>\n([\s\S]*?)\n<\/terminal_context>\s*$/;
 
@@ -158,6 +165,16 @@ export function extractTrailingTerminalContexts(prompt: string): ExtractedTermin
             .map(({ header, body }) => (body.length > 0 ? `${header}\n${body}` : header))
             .join("\n\n")
         : null,
+  };
+}
+
+export function deriveDisplayedUserMessageState(prompt: string): DisplayedUserMessageState {
+  const extractedContexts = extractTrailingTerminalContexts(prompt);
+  return {
+    visibleText: extractedContexts.promptText,
+    copyText: prompt,
+    contextCount: extractedContexts.contextCount,
+    previewTitle: extractedContexts.previewTitle,
   };
 }
 

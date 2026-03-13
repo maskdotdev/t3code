@@ -1,4 +1,4 @@
-import { extractTrailingTerminalContexts } from "../lib/terminalContext";
+import { deriveDisplayedUserMessageState } from "../lib/terminalContext";
 
 const ASSISTANT_CHARS_PER_LINE_FALLBACK = 72;
 const USER_CHARS_PER_LINE_FALLBACK = 56;
@@ -77,8 +77,8 @@ export function estimateTimelineMessageHeight(
 
   if (message.role === "user") {
     const charsPerLine = estimateCharsPerLineForUser(layout.timelineWidthPx);
-    const visibleUserText = extractTrailingTerminalContexts(message.text).promptText;
-    const estimatedLines = estimateWrappedLineCount(visibleUserText, charsPerLine);
+    const displayedUserMessage = deriveDisplayedUserMessageState(message.text);
+    const estimatedLines = estimateWrappedLineCount(displayedUserMessage.visibleText, charsPerLine);
     const attachmentCount = message.attachments?.length ?? 0;
     const attachmentRows = Math.ceil(attachmentCount / ATTACHMENTS_PER_ROW);
     const attachmentHeight = attachmentRows * USER_ATTACHMENT_ROW_HEIGHT_PX;
