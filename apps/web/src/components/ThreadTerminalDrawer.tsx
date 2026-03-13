@@ -144,6 +144,7 @@ function TerminalViewport({
   const terminalRef = useRef<Terminal | null>(null);
   const fitAddonRef = useRef<FitAddon | null>(null);
   const onSessionExitedRef = useRef(onSessionExited);
+  const terminalLabelRef = useRef(terminalLabel);
   const hasHandledExitRef = useRef(false);
   const selectionPointerRef = useRef<{ x: number; y: number } | null>(null);
   const [selectionAction, setSelectionAction] = useState<{
@@ -155,6 +156,21 @@ function TerminalViewport({
   useEffect(() => {
     onSessionExitedRef.current = onSessionExited;
   }, [onSessionExited]);
+
+  useEffect(() => {
+    terminalLabelRef.current = terminalLabel;
+    setSelectionAction((current) =>
+      current === null
+        ? null
+        : {
+            ...current,
+            selection: {
+              ...current.selection,
+              terminalLabel,
+            },
+          },
+    );
+  }, [terminalLabel]);
 
   useEffect(() => {
     const mount = containerRef.current;
@@ -212,7 +228,7 @@ function TerminalViewport({
         top: Math.max(8, Math.min(preferredTop, Math.max(bounds.height - 36, 8))),
         selection: {
           terminalId,
-          terminalLabel,
+          terminalLabel: terminalLabelRef.current,
           lineStart,
           lineEnd,
           text: normalizedText,

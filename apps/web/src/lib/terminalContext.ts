@@ -91,7 +91,7 @@ export function buildTerminalContextPreviewTitle(
   if (contexts.length === 0) {
     return null;
   }
-  return contexts
+  const previews = contexts
     .map((context) => {
       const normalized = normalizeTerminalContextSelection(context);
       if (!normalized) {
@@ -104,6 +104,7 @@ export function buildTerminalContextPreviewTitle(
     })
     .filter((value): value is string => value !== null)
     .join("\n\n");
+  return previews.length > 0 ? previews : null;
 }
 
 function buildTerminalContextBodyLines(selection: TerminalContextSelection): string[] {

@@ -3,6 +3,7 @@ import { describe, expect, it } from "vitest";
 
 import {
   appendTerminalContextsToPrompt,
+  buildTerminalContextPreviewTitle,
   buildTerminalContextBlock,
   deriveDisplayedUserMessageState,
   extractTrailingTerminalContexts,
@@ -88,5 +89,19 @@ describe("terminalContext", () => {
       contextCount: 0,
       previewTitle: null,
     });
+  });
+
+  it("returns null preview title when every context is invalid", () => {
+    expect(
+      buildTerminalContextPreviewTitle([
+        makeContext({
+          terminalId: "   ",
+        }),
+        makeContext({
+          id: "context-2",
+          text: "\n\n",
+        }),
+      ]),
+    ).toBeNull();
   });
 });
