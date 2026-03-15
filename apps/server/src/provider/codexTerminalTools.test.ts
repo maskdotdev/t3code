@@ -5,6 +5,7 @@ import { Effect } from "effect";
 import {
   CODEX_TERMINAL_DYNAMIC_TOOL_SPECS,
   executeCodexTerminalDynamicTool,
+  toCodexTerminalDynamicToolErrorPayload,
 } from "./codexTerminalTools";
 import { type TerminalManagerShape } from "../terminal/Services/Manager";
 
@@ -167,5 +168,46 @@ describe("executeCodexTerminalDynamicTool", () => {
         grep: "error",
       }),
     );
+  });
+});
+
+describe("toCodexTerminalDynamicToolErrorPayload", () => {
+  it("guides the model on invalid read arguments", () => {
+    const payload = toCodexTerminalDynamicToolErrorPayload(
+      "read_thread_terminal",
+      new Error("scope is forbidden"),
+    );
+
+    expect(payload).toEqual({
+      tool: "read_thread_terminal",
+      code: "INVALID_ARGUMENTS",
+      message: "scope is forbidden",
+      hint: "Call read_thread_terminal with terminalId or ordinal, scope 'tail' or 'full', optional maxLines <= 5000, and optional grep.",
+    });
+  });
+
+  it("guides the model to list terminals when selection fails", () => {
+    const payload = toCodexTerminalDynamicToolErrorPayload(
+      "read_thread_terminal",
+      new Error("Unable to resolve terminal for thread: thread-1"),
+    );
+
+    expect(payload).toEqual({
+      tool: "read_thread_terminal",
+      code: "TERMINAL_NOT_FOUND",
+      message: "Unable to resolve terminal for thread: thread-1",
+      hint: "Call list_thread_terminals to inspect valid terminalId and ordinal values, then retry with one of those selectors.",
+    });
+  });
+
+  it("returns supported tools for unknown tool calls", () => {
+    const payload = toCodexTerminalDynamicToolErrorPayload("bad_tool", new Error("nope"));
+
+    expect(payload).toEqual({
+      tool: "bad_tool",
+      code: "UNSUPPORTED_TOOL",
+      message: "Unsupported dynamic tool: bad_tool",
+      hint: "Supported dynamic tools: list_thread_terminals, read_thread_terminal.",
+    });
   });
 });

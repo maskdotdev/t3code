@@ -31,6 +31,7 @@ import {
   CODEX_TERMINAL_DYNAMIC_TOOL_SPECS,
   executeCodexTerminalDynamicTool,
   isCodexTerminalDynamicToolName,
+  toCodexTerminalDynamicToolErrorPayload,
 } from "./provider/codexTerminalTools";
 import {
   TerminalError,
@@ -1295,7 +1296,7 @@ export class CodexAppServerManager extends EventEmitter<CodexAppServerManagerEve
         context,
         request.id,
         false,
-        error instanceof Error ? error.message : "Dynamic tool execution failed.",
+        toCodexTerminalDynamicToolErrorPayload(tool, error),
       );
     }
   }
