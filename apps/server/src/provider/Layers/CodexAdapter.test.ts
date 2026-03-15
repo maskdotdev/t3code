@@ -22,7 +22,7 @@ import {
   type CodexAppServerSendTurnInput,
 } from "../../codexAppServerManager.ts";
 import { ServerConfig } from "../../config.ts";
-import { TerminalManager, type TerminalManagerShape } from "../../terminal/Services/Manager.ts";
+import { makeTerminalManagerTestLayer } from "../../terminal/testing.ts";
 import { CodexAdapter } from "../Services/CodexAdapter.ts";
 import { ProviderSessionDirectory } from "../Services/ProviderSessionDirectory.ts";
 import { makeCodexAdapterLive } from "./CodexAdapter.ts";
@@ -147,18 +147,7 @@ const providerSessionDirectoryTestLayer = Layer.succeed(ProviderSessionDirectory
   listThreadIds: () => Effect.succeed([]),
 });
 
-const terminalManagerTestLayer = Layer.succeed(TerminalManager, {
-  open: () => Effect.die(new Error("TerminalManager.open is not used in test")),
-  write: () => Effect.die(new Error("TerminalManager.write is not used in test")),
-  resize: () => Effect.die(new Error("TerminalManager.resize is not used in test")),
-  clear: () => Effect.die(new Error("TerminalManager.clear is not used in test")),
-  restart: () => Effect.die(new Error("TerminalManager.restart is not used in test")),
-  close: () => Effect.die(new Error("TerminalManager.close is not used in test")),
-  list: () => Effect.succeed([]),
-  read: () => Effect.die(new Error("TerminalManager.read is not used in test")),
-  subscribe: () => Effect.succeed(() => undefined),
-  dispose: Effect.void,
-} satisfies TerminalManagerShape);
+const terminalManagerTestLayer = makeTerminalManagerTestLayer("test");
 
 const validationManager = new FakeCodexManager();
 const validationLayer = it.layer(

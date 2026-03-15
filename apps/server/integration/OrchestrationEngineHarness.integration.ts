@@ -42,7 +42,7 @@ import { makeCodexAdapterLive } from "../src/provider/Layers/CodexAdapter.ts";
 import { CodexAdapter } from "../src/provider/Services/CodexAdapter.ts";
 import { ProviderService } from "../src/provider/Services/ProviderService.ts";
 import { AnalyticsService } from "../src/telemetry/Services/AnalyticsService.ts";
-import { TerminalManager, type TerminalManagerShape } from "../src/terminal/Services/Manager.ts";
+import { makeTerminalManagerTestLayer } from "../src/terminal/testing.ts";
 import { CheckpointReactorLive } from "../src/orchestration/Layers/CheckpointReactor.ts";
 import { OrchestrationEngineLive } from "../src/orchestration/Layers/OrchestrationEngine.ts";
 import { OrchestrationProjectionPipelineLive } from "../src/orchestration/Layers/ProjectionPipeline.ts";
@@ -85,19 +85,7 @@ function initializeGitWorkspace(cwd: string) {
   runGit(cwd, ["commit", "-m", "Initial"]);
 }
 
-const terminalManagerTestLayer = Layer.succeed(TerminalManager, {
-  open: () => Effect.die(new Error("TerminalManager.open is not used in integration harness")),
-  write: () => Effect.die(new Error("TerminalManager.write is not used in integration harness")),
-  resize: () => Effect.die(new Error("TerminalManager.resize is not used in integration harness")),
-  clear: () => Effect.die(new Error("TerminalManager.clear is not used in integration harness")),
-  restart: () =>
-    Effect.die(new Error("TerminalManager.restart is not used in integration harness")),
-  close: () => Effect.die(new Error("TerminalManager.close is not used in integration harness")),
-  list: () => Effect.succeed([]),
-  read: () => Effect.die(new Error("TerminalManager.read is not used in integration harness")),
-  subscribe: () => Effect.succeed(() => undefined),
-  dispose: Effect.void,
-} satisfies TerminalManagerShape);
+const terminalManagerTestLayer = makeTerminalManagerTestLayer("integration harness");
 
 export function gitRefExists(cwd: string, ref: string): boolean {
   try {

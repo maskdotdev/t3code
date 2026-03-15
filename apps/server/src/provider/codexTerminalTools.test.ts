@@ -1,4 +1,4 @@
-import { describe, expect, it, vi } from "vitest";
+import { describe, expect, it } from "vitest";
 import { ThreadId } from "@t3tools/contracts";
 import { Effect } from "effect";
 
@@ -7,25 +7,9 @@ import {
   executeCodexTerminalDynamicTool,
   toCodexTerminalDynamicToolErrorPayload,
 } from "./codexTerminalTools";
-import { type TerminalManagerShape } from "../terminal/Services/Manager";
+import { createTerminalManagerStub } from "../terminal/testing";
 
 const asThreadId = (value: string): ThreadId => ThreadId.makeUnsafe(value);
-
-function createTerminalManagerStub(
-  overrides: Pick<TerminalManagerShape, "list" | "read">,
-): TerminalManagerShape {
-  return {
-    open: vi.fn(),
-    write: vi.fn(),
-    resize: vi.fn(),
-    clear: vi.fn(),
-    restart: vi.fn(),
-    close: vi.fn(),
-    subscribe: vi.fn(),
-    dispose: Effect.void,
-    ...overrides,
-  };
-}
 
 describe("CODEX_TERMINAL_DYNAMIC_TOOL_SPECS", () => {
   it("exposes terminal list and read tools", () => {
@@ -58,7 +42,7 @@ describe("executeCodexTerminalDynamicTool", () => {
         runWithTerminalManager: async (operation) =>
           Effect.runPromise(
             operation(
-              createTerminalManagerStub({
+              createTerminalManagerStub("codexTerminalTools.test.ts", {
                 list: () => Effect.succeed([terminalSummary]),
                 read: () => Effect.die("read should not be used"),
               }),
@@ -81,7 +65,7 @@ describe("executeCodexTerminalDynamicTool", () => {
         runWithTerminalManager: async (operation) =>
           Effect.runPromise(
             operation(
-              createTerminalManagerStub({
+              createTerminalManagerStub("codexTerminalTools.test.ts", {
                 list: () => Effect.die("list should not be used"),
                 read: (input) =>
                   Effect.succeed({
@@ -130,7 +114,7 @@ describe("executeCodexTerminalDynamicTool", () => {
         runWithTerminalManager: async (operation) =>
           Effect.runPromise(
             operation(
-              createTerminalManagerStub({
+              createTerminalManagerStub("codexTerminalTools.test.ts", {
                 list: () => Effect.die("list should not be used"),
                 read: (input) =>
                   Effect.succeed({
