@@ -28,6 +28,13 @@ export const TerminalThreadInput = Schema.Struct({
 });
 export type TerminalThreadInput = Schema.Codec.Encoded<typeof TerminalThreadInput>;
 
+const TerminalOrdinalSchema = Schema.Int.check(Schema.isGreaterThan(0));
+const TerminalLabelSchema = TrimmedNonEmptyStringSchema.check(Schema.isMaxLength(128));
+const TerminalReadLineCountSchema = Schema.Int.check(Schema.isGreaterThan(0)).check(
+  Schema.isLessThanOrEqualTo(5_000),
+);
+const TerminalSearchQuerySchema = TrimmedNonEmptyStringSchema.check(Schema.isMaxLength(512));
+
 const TerminalSessionInput = Schema.Struct({
   ...TerminalThreadInput.fields,
   terminalId: TerminalIdWithDefaultSchema,
@@ -75,6 +82,24 @@ export const TerminalCloseInput = Schema.Struct({
 });
 export type TerminalCloseInput = Schema.Codec.Encoded<typeof TerminalCloseInput>;
 
+export const TerminalListInput = TerminalThreadInput;
+export type TerminalListInput = Schema.Codec.Encoded<typeof TerminalListInput>;
+
+export const TerminalReadScope = Schema.Literals(["viewport", "tail", "full"]);
+export type TerminalReadScope = typeof TerminalReadScope.Type;
+
+export const TerminalReadInput = Schema.Struct({
+  ...TerminalThreadInput.fields,
+  terminalId: Schema.optional(TerminalIdSchema),
+  ordinal: Schema.optional(TerminalOrdinalSchema),
+  scope: Schema.optional(
+    TerminalReadScope.pipe(Schema.withDecodingDefault(() => "viewport" as const)),
+  ),
+  maxLines: Schema.optional(TerminalReadLineCountSchema),
+  grep: Schema.optional(TerminalSearchQuerySchema),
+});
+export type TerminalReadInput = Schema.Codec.Encoded<typeof TerminalReadInput>;
+
 export const TerminalSessionStatus = Schema.Literals(["starting", "running", "exited", "error"]);
 export type TerminalSessionStatus = typeof TerminalSessionStatus.Type;
 
@@ -90,6 +115,33 @@ export const TerminalSessionSnapshot = Schema.Struct({
   updatedAt: Schema.String,
 });
 export type TerminalSessionSnapshot = typeof TerminalSessionSnapshot.Type;
+
+export const TerminalSummary = Schema.Struct({
+  threadId: Schema.String.check(Schema.isNonEmpty()),
+  terminalId: Schema.String.check(Schema.isNonEmpty()),
+  label: TerminalLabelSchema,
+  ordinal: TerminalOrdinalSchema,
+  cwd: Schema.String,
+  status: TerminalSessionStatus,
+  pid: Schema.NullOr(Schema.Int.check(Schema.isGreaterThan(0))),
+  hasRunningSubprocess: Schema.Boolean,
+  updatedAt: Schema.String.check(Schema.isNonEmpty()),
+});
+export type TerminalSummary = typeof TerminalSummary.Type;
+
+export const TerminalRenderedSnapshot = Schema.Struct({
+  ...TerminalSummary.fields,
+  cols: TerminalColsSchema,
+  rows: TerminalRowsSchema,
+  scope: TerminalReadScope,
+  maxLines: Schema.NullOr(TerminalReadLineCountSchema),
+  grep: Schema.NullOr(TerminalSearchQuerySchema),
+  totalLines: Schema.Int.check(Schema.isGreaterThanOrEqualTo(0)),
+  returnedLineCount: Schema.Int.check(Schema.isGreaterThanOrEqualTo(0)),
+  text: Schema.String,
+  lines: Schema.Array(Schema.String),
+});
+export type TerminalRenderedSnapshot = typeof TerminalRenderedSnapshot.Type;
 
 const TerminalEventBaseSchema = Schema.Struct({
   threadId: Schema.String.check(Schema.isNonEmpty()),

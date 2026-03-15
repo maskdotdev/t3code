@@ -38,12 +38,13 @@ import {
 import { resolveAttachmentPath } from "../../attachmentStore.ts";
 import { ServerConfig } from "../../config.ts";
 import { type EventNdjsonLogger, makeEventNdjsonLogger } from "./EventNdjsonLogger.ts";
+import { TerminalManager } from "../../terminal/Services/Manager.ts";
 
 const PROVIDER = "codex" as const;
 
 export interface CodexAdapterLiveOptions {
   readonly manager?: CodexAppServerManager;
-  readonly makeManager?: (services?: ServiceMap.ServiceMap<never>) => CodexAppServerManager;
+  readonly makeManager?: (services?: ServiceMap.ServiceMap<any>) => CodexAppServerManager;
   readonly nativeEventLogPath?: string;
   readonly nativeEventLogger?: EventNdjsonLogger;
 }
@@ -1274,7 +1275,9 @@ const makeCodexAdapter = (options?: CodexAdapterLiveOptions) =>
         if (options?.manager) {
           return options.manager;
         }
-        const services = yield* Effect.services<never>();
+        const services = yield* Effect.services<
+          FileSystem.FileSystem | ServerConfig | TerminalManager
+        >();
         return options?.makeManager?.(services) ?? new CodexAppServerManager(services);
       }),
       (manager) =>
@@ -1470,7 +1473,9 @@ const makeCodexAdapter = (options?: CodexAdapterLiveOptions) =>
             yield* nativeEventLogger.write(event, event.threadId);
           });
 
-        const services = yield* Effect.services<never>();
+        const services = yield* Effect.services<
+          FileSystem.FileSystem | ServerConfig | TerminalManager
+        >();
         const listener = (event: ProviderEvent) =>
           Effect.gen(function* () {
             yield* writeNativeEvent(event);
