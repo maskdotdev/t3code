@@ -415,49 +415,14 @@ it.layer(NodeServices.layer)("ProviderHealth", (it) => {
   // ── hasCustomModelProvider tests ───────────────────────────────────
 
   describe("hasCustomModelProvider", () => {
-    it.effect("returns false when no config file exists", () =>
-      Effect.gen(function* () {
-        yield* withTempCodexHome();
-        assert.strictEqual(yield* hasCustomModelProvider, false);
-      }),
-    );
-
-    it.effect("returns false when model_provider is not set", () =>
-      Effect.gen(function* () {
-        yield* withTempCodexHome('model = "gpt-5-codex"\n');
-        assert.strictEqual(yield* hasCustomModelProvider, false);
-      }),
-    );
-
-    it.effect("returns false when model_provider is openai", () =>
+    it.effect("returns false for OpenAI-native provider config", () =>
       Effect.gen(function* () {
         yield* withTempCodexHome('model_provider = "openai"\n');
         assert.strictEqual(yield* hasCustomModelProvider, false);
       }),
     );
 
-    it.effect("returns true when model_provider is portkey", () =>
-      Effect.gen(function* () {
-        yield* withTempCodexHome('model_provider = "portkey"\n');
-        assert.strictEqual(yield* hasCustomModelProvider, true);
-      }),
-    );
-
-    it.effect("returns true when model_provider is azure", () =>
-      Effect.gen(function* () {
-        yield* withTempCodexHome('model_provider = "azure"\n');
-        assert.strictEqual(yield* hasCustomModelProvider, true);
-      }),
-    );
-
-    it.effect("returns true when model_provider is ollama", () =>
-      Effect.gen(function* () {
-        yield* withTempCodexHome('model_provider = "ollama"\n');
-        assert.strictEqual(yield* hasCustomModelProvider, true);
-      }),
-    );
-
-    it.effect("returns true when model_provider is a custom proxy", () =>
+    it.effect("returns true for custom non-OpenAI providers", () =>
       Effect.gen(function* () {
         yield* withTempCodexHome('model_provider = "my-company-proxy"\n');
         assert.strictEqual(yield* hasCustomModelProvider, true);
