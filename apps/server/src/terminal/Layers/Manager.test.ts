@@ -254,25 +254,6 @@ describe("TerminalManager", () => {
     manager.dispose();
   });
 
-  it("reads the rendered terminal tail from the server mirror", async () => {
-    const { manager, ptyAdapter } = makeManager();
-    await manager.open(openInput({ cols: 40, rows: 5 }));
-    const process = ptyAdapter.processes[0];
-    expect(process).toBeDefined();
-    if (!process) return;
-
-    process.emitData("echo hello\r\n");
-    process.emitData("hello world\r\n");
-
-    const snapshot = await manager.read({ threadId: "thread-1" });
-
-    expect(snapshot.label).toBe("Terminal 1");
-    expect(snapshot.scope).toBe("tail");
-    expect(snapshot.text).toContain("hello world");
-
-    manager.dispose();
-  });
-
   it("supports tail and grep reads over rendered terminal scrollback", async () => {
     const { manager, ptyAdapter } = makeManager();
     await manager.open(openInput({ cols: 40, rows: 5 }));

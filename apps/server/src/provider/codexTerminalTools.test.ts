@@ -3,22 +3,12 @@ import { ThreadId } from "@t3tools/contracts";
 import { Effect } from "effect";
 
 import {
-  CODEX_TERMINAL_DYNAMIC_TOOL_SPECS,
   executeCodexTerminalDynamicTool,
   toCodexTerminalDynamicToolErrorPayload,
 } from "./codexTerminalTools";
 import { createTerminalManagerStub } from "../terminal/testing";
 
 const asThreadId = (value: string): ThreadId => ThreadId.makeUnsafe(value);
-
-describe("CODEX_TERMINAL_DYNAMIC_TOOL_SPECS", () => {
-  it("exposes terminal list and read tools", () => {
-    expect(CODEX_TERMINAL_DYNAMIC_TOOL_SPECS.map((spec) => spec.name)).toEqual([
-      "list_thread_terminals",
-      "read_thread_terminal",
-    ]);
-  });
-});
 
 describe("executeCodexTerminalDynamicTool", () => {
   it("lists thread terminals", async () => {

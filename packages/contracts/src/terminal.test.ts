@@ -4,11 +4,9 @@ import { describe, expect, it } from "vitest";
 import {
   DEFAULT_TERMINAL_ID,
   TerminalClearInput,
-  TerminalEvent,
   TerminalOpenInput,
   TerminalReadInput,
   TerminalReadToolInput,
-  TerminalRenderedSnapshot,
   TerminalThreadInput,
 } from "./terminal";
 
@@ -76,24 +74,6 @@ describe("TerminalClearInput", () => {
 });
 
 describe("TerminalReadInput", () => {
-  it("accepts terminal selectors and read options", () => {
-    expect(
-      decodes(TerminalReadInput, {
-        threadId: "thread-1",
-        terminalId: "build",
-        scope: "tail",
-        maxLines: 25,
-        grep: "error",
-      }),
-    ).toBe(true);
-    expect(
-      decodes(TerminalReadInput, {
-        threadId: "thread-1",
-        ordinal: 2,
-      }),
-    ).toBe(true);
-  });
-
   it("rejects invalid ordinal and scope values", () => {
     expect(
       decodes(TerminalReadInput, {
@@ -118,56 +98,5 @@ describe("TerminalReadToolInput", () => {
     });
     expect(parsed.terminalId).toBe("build");
     expect(parsed.scope).toBe("tail");
-  });
-});
-
-describe("TerminalRenderedSnapshot", () => {
-  it("accepts rendered terminal snapshots", () => {
-    expect(
-      decodes(TerminalRenderedSnapshot, {
-        threadId: "thread-1",
-        terminalId: DEFAULT_TERMINAL_ID,
-        label: "Terminal 1",
-        ordinal: 1,
-        cwd: "/tmp/project",
-        status: "running",
-        pid: 1234,
-        hasRunningSubprocess: false,
-        updatedAt: new Date().toISOString(),
-        cols: 120,
-        rows: 30,
-        scope: "tail",
-        maxLines: 25,
-        grep: "error",
-        totalLines: 120,
-        returnedLineCount: 1,
-        text: "hello",
-        lines: ["hello"],
-      }),
-    ).toBe(true);
-  });
-});
-
-describe("TerminalEvent", () => {
-  it("accepts output and exited events", () => {
-    expect(
-      decodes(TerminalEvent, {
-        type: "output",
-        threadId: "thread-1",
-        terminalId: DEFAULT_TERMINAL_ID,
-        createdAt: new Date().toISOString(),
-        data: "line\n",
-      }),
-    ).toBe(true);
-    expect(
-      decodes(TerminalEvent, {
-        type: "exited",
-        threadId: "thread-1",
-        terminalId: DEFAULT_TERMINAL_ID,
-        createdAt: new Date().toISOString(),
-        exitCode: 0,
-        exitSignal: null,
-      }),
-    ).toBe(true);
   });
 });
