@@ -240,7 +240,7 @@ class MockTerminalManager implements TerminalManagerShape {
             updatedAt: session.updatedAt,
             cols: 120,
             rows: 30,
-            scope: input.scope ?? "viewport",
+            scope: input.scope ?? "tail",
             maxLines: input.maxLines ?? null,
             grep: input.grep ?? null,
             totalLines: session.history.length > 0 ? session.history.split(/\r?\n/g).length : 0,

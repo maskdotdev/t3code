@@ -437,26 +437,16 @@ export class TerminalManagerRuntime extends EventEmitter<TerminalManagerEvents> 
         const history = await this.readHistory(input.threadId, input.terminalId);
         const cols = input.cols ?? metadata?.cols ?? DEFAULT_OPEN_COLS;
         const rows = input.rows ?? metadata?.rows ?? DEFAULT_OPEN_ROWS;
-        const createdAt = metadata?.createdAt ?? new Date().toISOString();
-        const session: TerminalSessionState = {
+        const session = this.createSessionState({
           threadId: input.threadId,
           terminalId: input.terminalId,
-          createdAt,
+          createdAt: metadata?.createdAt ?? new Date().toISOString(),
           cwd: input.cwd,
-          status: "starting",
-          pid: null,
           history,
-          exitCode: null,
-          exitSignal: null,
-          updatedAt: new Date().toISOString(),
           cols,
           rows,
-          process: null,
-          unsubscribeData: null,
-          unsubscribeExit: null,
-          hasRunningSubprocess: false,
           runtimeEnv: normalizedRuntimeEnv(input.env),
-        };
+        });
         this.sessions.set(sessionKey, session);
         await this.persistMetadata(session);
         await this.rebuildMirror(session, history);
@@ -476,15 +466,10 @@ export class TerminalManagerRuntime extends EventEmitter<TerminalManagerEvents> 
         this.stopProcess(existing);
         existing.cwd = input.cwd;
         existing.runtimeEnv = nextRuntimeEnv;
-        existing.history = "";
-        await this.persistHistory(existing.threadId, existing.terminalId, existing.history);
-        await this.persistMetadata(existing);
-        await this.rebuildMirror(existing, existing.history);
+        await this.resetSessionOutput(existing);
       } else if (existing.status === "exited" || existing.status === "error") {
         existing.runtimeEnv = nextRuntimeEnv;
-        existing.history = "";
-        await this.persistHistory(existing.threadId, existing.terminalId, existing.history);
-        await this.rebuildMirror(existing, existing.history);
+        await this.resetSessionOutput(existing);
       } else if (currentRuntimeEnv !== nextRuntimeEnv) {
         existing.runtimeEnv = nextRuntimeEnv;
       }
@@ -524,43 +509,12 @@ export class TerminalManagerRuntime extends EventEmitter<TerminalManagerEvents> 
       throw new Error(`No terminals found for thread: ${input.threadId}`);
     }
 
-    const selected =
-      (input.terminalId
-        ? entries.find((entry) => entry.terminalId === input.terminalId)
-        : undefined) ??
-      (input.ordinal ? entries[input.ordinal - 1] : undefined) ??
-      entries.find((entry) => entry.status === "running") ??
-      entries[0];
-
-    if (!selected) {
-      throw new Error(`Unable to resolve terminal for thread: ${input.threadId}`);
-    }
-
-    const ordinal = entries.findIndex((entry) => entry.terminalId === selected.terminalId) + 1;
-    const rendered = await this.readRenderedLines(selected.threadId, selected.terminalId);
-    const scope = input.scope ?? "viewport";
-    const nonViewportLines = trimTrailingEmptyRenderedLines(rendered.lines);
-    const scopedLines =
-      scope === "full"
-        ? nonViewportLines
-        : scope === "tail"
-          ? nonViewportLines.slice(
-              Math.max(0, nonViewportLines.length - (input.maxLines ?? selected.rows)),
-            )
-          : rendered.lines.slice(rendered.viewportStart, rendered.viewportEnd);
-    const lines = scopedLines.filter((line) => matchesRenderedLine(line, input.grep));
-    return {
-      ...this.toTerminalSummary(selected, ordinal),
-      cols: selected.cols,
-      rows: selected.rows,
-      scope,
-      maxLines: input.maxLines ?? null,
-      grep: input.grep ?? null,
-      totalLines: rendered.lines.length,
-      returnedLineCount: lines.length,
-      text: lines.join("\n"),
-      lines,
-    };
+    const selection = this.selectReadEntry(entries, input);
+    const rendered = await this.readRenderedLines(
+      selection.entry.threadId,
+      selection.entry.terminalId,
+    );
+    return this.buildRenderedSnapshot(selection, rendered.lines, input);
   }
 
   async write(raw: TerminalWriteInput): Promise<void> {
@@ -620,25 +574,16 @@ export class TerminalManagerRuntime extends EventEmitter<TerminalManagerEvents> 
       if (!session) {
         const cols = input.cols ?? DEFAULT_OPEN_COLS;
         const rows = input.rows ?? DEFAULT_OPEN_ROWS;
-        session = {
+        session = this.createSessionState({
           threadId: input.threadId,
           terminalId: input.terminalId,
           createdAt: new Date().toISOString(),
           cwd: input.cwd,
-          status: "starting",
-          pid: null,
           history: "",
-          exitCode: null,
-          exitSignal: null,
-          updatedAt: new Date().toISOString(),
           cols,
           rows,
-          process: null,
-          unsubscribeData: null,
-          unsubscribeExit: null,
-          hasRunningSubprocess: false,
           runtimeEnv: normalizedRuntimeEnv(input.env),
-        };
+        });
         this.sessions.set(sessionKey, session);
         this.evictInactiveSessionsIfNeeded();
       } else {
@@ -650,10 +595,7 @@ export class TerminalManagerRuntime extends EventEmitter<TerminalManagerEvents> 
       const cols = input.cols ?? session.cols;
       const rows = input.rows ?? session.rows;
 
-      session.history = "";
-      await this.persistHistory(input.threadId, input.terminalId, session.history);
-      await this.persistMetadata(session);
-      await this.rebuildMirror(session, session.history);
+      await this.resetSessionOutput(session);
       await this.startSession(session, { ...input, cols, rows }, "restarted");
       return this.snapshot(session);
     });
@@ -1201,47 +1143,91 @@ export class TerminalManagerRuntime extends EventEmitter<TerminalManagerEvents> 
     this.ensureMirror(session).terminal.resize(session.cols, session.rows);
   }
 
+  private createSessionState(input: {
+    threadId: string;
+    terminalId: string;
+    createdAt: string;
+    cwd: string;
+    history: string;
+    cols: number;
+    rows: number;
+    runtimeEnv: Record<string, string> | null;
+    status?: TerminalSessionState["status"];
+    updatedAt?: string;
+  }): TerminalSessionState {
+    return {
+      threadId: input.threadId,
+      terminalId: input.terminalId,
+      createdAt: input.createdAt,
+      cwd: input.cwd,
+      status: input.status ?? "starting",
+      pid: null,
+      history: input.history,
+      exitCode: null,
+      exitSignal: null,
+      updatedAt: input.updatedAt ?? new Date().toISOString(),
+      cols: input.cols,
+      rows: input.rows,
+      process: null,
+      unsubscribeData: null,
+      unsubscribeExit: null,
+      hasRunningSubprocess: false,
+      runtimeEnv: input.runtimeEnv,
+    };
+  }
+
+  private async resetSessionOutput(
+    session: Pick<TerminalSessionState, "threadId" | "terminalId" | "history" | "cols" | "rows">,
+  ): Promise<void> {
+    session.history = "";
+    await this.persistHistory(session.threadId, session.terminalId, session.history);
+    await this.rebuildMirror(session, session.history);
+  }
+
+  private async loadPersistedSessionState(
+    threadId: string,
+    terminalId: string,
+  ): Promise<TerminalSessionState | null> {
+    const persisted = await this.readPersistedEntry(threadId, terminalId);
+    if (!persisted) {
+      return null;
+    }
+
+    return this.createSessionState({
+      ...persisted,
+      history: await this.readHistory(threadId, terminalId),
+      runtimeEnv: null,
+      status: "exited",
+      updatedAt: persisted.updatedAt,
+    });
+  }
+
+  private async ensureSessionForRead(
+    threadId: string,
+    terminalId: string,
+  ): Promise<TerminalSessionState> {
+    const sessionKey = toSessionKey(threadId, terminalId);
+    const session =
+      this.sessions.get(sessionKey) ?? (await this.loadPersistedSessionState(threadId, terminalId));
+    if (!session) {
+      throw new Error(`Unknown terminal thread: ${threadId}, terminal: ${terminalId}`);
+    }
+
+    if (!this.mirrors.has(sessionKey)) {
+      await this.rebuildMirror(session, session.history);
+    }
+    return session;
+  }
+
   private async readRenderedLines(
     threadId: string,
     terminalId: string,
-  ): Promise<{
-    lines: string[];
-    viewportStart: number;
-    viewportEnd: number;
-  }> {
+  ): Promise<{ lines: string[] }> {
     const sessionKey = toSessionKey(threadId, terminalId);
-    let session = this.sessions.get(sessionKey);
-
-    if (!session) {
-      const persisted = await this.readPersistedEntry(threadId, terminalId);
-      if (!persisted) {
-        throw new Error(`Unknown terminal thread: ${threadId}, terminal: ${terminalId}`);
-      }
-      await this.rebuildMirror(persisted, await this.readHistory(threadId, terminalId));
-      session = {
-        ...persisted,
-        status: "exited",
-        pid: null,
-        history: "",
-        exitCode: null,
-        exitSignal: null,
-        process: null,
-        unsubscribeData: null,
-        unsubscribeExit: null,
-        hasRunningSubprocess: false,
-        runtimeEnv: null,
-      };
-    } else if (!this.mirrors.has(sessionKey)) {
-      await this.rebuildMirror(session, session.history);
-    }
-
+    await this.ensureSessionForRead(threadId, terminalId);
     const mirror = this.mirrors.get(sessionKey);
     if (!mirror) {
-      return {
-        lines: [],
-        viewportStart: 0,
-        viewportEnd: 0,
-      };
+      return { lines: [] };
     }
     await mirror.pending.catch(() => undefined);
 
@@ -1251,12 +1237,55 @@ export class TerminalManagerRuntime extends EventEmitter<TerminalManagerEvents> 
       const line = buffer.getLine(lineIndex);
       lines.push(line ? line.translateToString(false).trimEnd() : "");
     }
-    const viewportStart = Math.max(0, buffer.baseY);
-    const viewportEnd = Math.min(lines.length, viewportStart + session.rows);
+    return { lines };
+  }
+
+  private selectReadEntry(
+    entries: TerminalListEntry[],
+    input: TerminalReadInput,
+  ): { entry: TerminalListEntry; ordinal: number } {
+    const entry =
+      (input.terminalId
+        ? entries.find((candidate) => candidate.terminalId === input.terminalId)
+        : undefined) ??
+      (input.ordinal ? entries[input.ordinal - 1] : undefined) ??
+      entries.find((candidate) => candidate.status === "running") ??
+      entries[0];
+    if (!entry) {
+      throw new Error(`Unable to resolve terminal for thread: ${input.threadId}`);
+    }
+
     return {
+      entry,
+      ordinal: entries.findIndex((candidate) => candidate.terminalId === entry.terminalId) + 1,
+    };
+  }
+
+  private buildRenderedSnapshot(
+    selection: { entry: TerminalListEntry; ordinal: number },
+    renderedLines: string[],
+    input: TerminalReadInput,
+  ): TerminalRenderedSnapshot {
+    const scope = input.scope ?? "tail";
+    const normalizedLines = trimTrailingEmptyRenderedLines(renderedLines);
+    const scopeLineLimit = input.maxLines ?? selection.entry.rows;
+    const scopedLines =
+      scope === "full"
+        ? normalizedLines
+        : normalizedLines.slice(Math.max(0, normalizedLines.length - scopeLineLimit));
+    const lines = scopedLines.filter((line) => matchesRenderedLine(line, input.grep));
+
+    return {
+      ...this.toTerminalSummary(selection.entry, selection.ordinal),
+      cols: selection.entry.cols,
+      rows: selection.entry.rows,
+      scope,
+      maxLines: input.maxLines ?? null,
+      grep: input.grep ?? null,
+      totalLines: renderedLines.length,
+      returnedLineCount: lines.length,
+      text: lines.join("\n"),
       lines,
-      viewportStart,
-      viewportEnd,
     };
   }
 

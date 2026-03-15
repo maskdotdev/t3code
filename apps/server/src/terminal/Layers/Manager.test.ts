@@ -254,7 +254,7 @@ describe("TerminalManager", () => {
     manager.dispose();
   });
 
-  it("reads the rendered terminal viewport from the server mirror", async () => {
+  it("reads the rendered terminal tail from the server mirror", async () => {
     const { manager, ptyAdapter } = makeManager();
     await manager.open(openInput({ cols: 40, rows: 5 }));
     const process = ptyAdapter.processes[0];
@@ -267,7 +267,7 @@ describe("TerminalManager", () => {
     const snapshot = await manager.read({ threadId: "thread-1" });
 
     expect(snapshot.label).toBe("Terminal 1");
-    expect(snapshot.scope).toBe("viewport");
+    expect(snapshot.scope).toBe("tail");
     expect(snapshot.text).toContain("hello world");
 
     manager.dispose();
@@ -342,7 +342,7 @@ describe("TerminalManager", () => {
     }
   });
 
-  it("clears the mirrored viewport when the terminal is cleared", async () => {
+  it("clears the mirrored terminal output when the terminal is cleared", async () => {
     const { manager, ptyAdapter } = makeManager();
     await manager.open(openInput({ cols: 40, rows: 5 }));
     const process = ptyAdapter.processes[0];

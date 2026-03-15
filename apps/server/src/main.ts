@@ -200,7 +200,7 @@ const ServerConfigLive = (input: CliInput) =>
 const LayerLive = (input: CliInput) =>
   (() => {
     const terminalLayer = makeServerTerminalLayer();
-    const runtimeLayer = makeServerRuntimeServicesLayer();
+    const runtimeLayer = makeServerRuntimeServicesLayer(terminalLayer);
     const providerLayer = makeServerProviderLayer().pipe(Layer.provideMerge(terminalLayer));
 
     return Layer.empty.pipe(

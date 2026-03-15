@@ -85,18 +85,24 @@ export type TerminalCloseInput = Schema.Codec.Encoded<typeof TerminalCloseInput>
 export const TerminalListInput = TerminalThreadInput;
 export type TerminalListInput = Schema.Codec.Encoded<typeof TerminalListInput>;
 
-export const TerminalReadScope = Schema.Literals(["viewport", "tail", "full"]);
+export const TerminalListToolInput = Schema.Struct({});
+export type TerminalListToolInput = typeof TerminalListToolInput.Type;
+
+export const TerminalReadScope = Schema.Literals(["tail", "full"]);
 export type TerminalReadScope = typeof TerminalReadScope.Type;
+
+export const TerminalReadToolInput = Schema.Struct({
+  terminalId: Schema.optional(TerminalIdSchema),
+  ordinal: Schema.optional(TerminalOrdinalSchema),
+  scope: Schema.optional(TerminalReadScope.pipe(Schema.withDecodingDefault(() => "tail" as const))),
+  maxLines: Schema.optional(TerminalReadLineCountSchema),
+  grep: Schema.optional(TerminalSearchQuerySchema),
+});
+export type TerminalReadToolInput = typeof TerminalReadToolInput.Type;
 
 export const TerminalReadInput = Schema.Struct({
   ...TerminalThreadInput.fields,
-  terminalId: Schema.optional(TerminalIdSchema),
-  ordinal: Schema.optional(TerminalOrdinalSchema),
-  scope: Schema.optional(
-    TerminalReadScope.pipe(Schema.withDecodingDefault(() => "viewport" as const)),
-  ),
-  maxLines: Schema.optional(TerminalReadLineCountSchema),
-  grep: Schema.optional(TerminalSearchQuerySchema),
+  ...TerminalReadToolInput.fields,
 });
 export type TerminalReadInput = Schema.Codec.Encoded<typeof TerminalReadInput>;
 
