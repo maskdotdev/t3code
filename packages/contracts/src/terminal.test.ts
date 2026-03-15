@@ -6,9 +6,13 @@ import {
   TerminalClearInput,
   TerminalCloseInput,
   TerminalEvent,
+  TerminalListInput,
   TerminalOpenInput,
+  TerminalReadInput,
+  TerminalRenderedSnapshot,
   TerminalResizeInput,
   TerminalSessionSnapshot,
+  TerminalSummary,
   TerminalThreadInput,
   TerminalWriteInput,
 } from "./terminal";
@@ -150,6 +154,53 @@ describe("TerminalCloseInput", () => {
   });
 });
 
+describe("TerminalListInput", () => {
+  it("accepts valid thread-scoped list input", () => {
+    expect(
+      decodes(TerminalListInput, {
+        threadId: "thread-1",
+      }),
+    ).toBe(true);
+  });
+});
+
+describe("TerminalReadInput", () => {
+  it("accepts terminal id or ordinal selectors", () => {
+    expect(
+      decodes(TerminalReadInput, {
+        threadId: "thread-1",
+        terminalId: "build",
+      }),
+    ).toBe(true);
+    expect(
+      decodes(TerminalReadInput, {
+        threadId: "thread-1",
+        ordinal: 2,
+      }),
+    ).toBe(true);
+  });
+
+  it("accepts scope, maxLines, and grep options", () => {
+    expect(
+      decodes(TerminalReadInput, {
+        threadId: "thread-1",
+        scope: "tail",
+        maxLines: 25,
+        grep: "error",
+      }),
+    ).toBe(true);
+  });
+
+  it("rejects non-positive ordinals", () => {
+    expect(
+      decodes(TerminalReadInput, {
+        threadId: "thread-1",
+        ordinal: 0,
+      }),
+    ).toBe(false);
+  });
+});
+
 describe("TerminalSessionSnapshot", () => {
   it("accepts running snapshots", () => {
     expect(
@@ -163,6 +214,51 @@ describe("TerminalSessionSnapshot", () => {
         exitCode: null,
         exitSignal: null,
         updatedAt: new Date().toISOString(),
+      }),
+    ).toBe(true);
+  });
+});
+
+describe("TerminalSummary", () => {
+  it("accepts terminal summaries", () => {
+    expect(
+      decodes(TerminalSummary, {
+        threadId: "thread-1",
+        terminalId: DEFAULT_TERMINAL_ID,
+        label: "Terminal 1",
+        ordinal: 1,
+        cwd: "/tmp/project",
+        status: "running",
+        pid: 1234,
+        hasRunningSubprocess: false,
+        updatedAt: new Date().toISOString(),
+      }),
+    ).toBe(true);
+  });
+});
+
+describe("TerminalRenderedSnapshot", () => {
+  it("accepts rendered terminal snapshots", () => {
+    expect(
+      decodes(TerminalRenderedSnapshot, {
+        threadId: "thread-1",
+        terminalId: DEFAULT_TERMINAL_ID,
+        label: "Terminal 1",
+        ordinal: 1,
+        cwd: "/tmp/project",
+        status: "running",
+        pid: 1234,
+        hasRunningSubprocess: false,
+        updatedAt: new Date().toISOString(),
+        cols: 120,
+        rows: 30,
+        scope: "tail",
+        maxLines: 25,
+        grep: "error",
+        totalLines: 120,
+        returnedLineCount: 1,
+        text: "hello",
+        lines: ["hello"],
       }),
     ).toBe(true);
   });

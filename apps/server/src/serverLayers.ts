@@ -36,11 +36,12 @@ import { GitServiceLive } from "./git/Layers/GitService";
 import { BunPtyAdapterLive } from "./terminal/Layers/BunPTY";
 import { NodePtyAdapterLive } from "./terminal/Layers/NodePTY";
 import { AnalyticsService } from "./telemetry/Services/AnalyticsService";
+import { TerminalManager } from "./terminal/Services/Manager";
 
 export function makeServerProviderLayer(): Layer.Layer<
   ProviderService,
   ProviderUnsupportedError,
-  SqlClient.SqlClient | ServerConfig | FileSystem.FileSystem | AnalyticsService
+  SqlClient.SqlClient | ServerConfig | FileSystem.FileSystem | AnalyticsService | TerminalManager
 > {
   return Effect.gen(function* () {
     const { stateDir } = yield* ServerConfig;
@@ -66,6 +67,16 @@ export function makeServerProviderLayer(): Layer.Layer<
       canonicalEventLogger ? { canonicalEventLogger } : undefined,
     ).pipe(Layer.provide(adapterRegistryLayer), Layer.provide(providerSessionDirectoryLayer));
   }).pipe(Layer.unwrap);
+}
+
+export function makeServerTerminalLayer() {
+  return TerminalManagerLive.pipe(
+    Layer.provide(
+      typeof Bun !== "undefined" && process.platform !== "win32"
+        ? BunPtyAdapterLive
+        : NodePtyAdapterLive,
+    ),
+  );
 }
 
 export function makeServerRuntimeServicesLayer() {
@@ -107,13 +118,7 @@ export function makeServerRuntimeServicesLayer() {
     Layer.provideMerge(checkpointReactorLayer),
   );
 
-  const terminalLayer = TerminalManagerLive.pipe(
-    Layer.provide(
-      typeof Bun !== "undefined" && process.platform !== "win32"
-        ? BunPtyAdapterLive
-        : NodePtyAdapterLive,
-    ),
-  );
+  const terminalLayer = makeServerTerminalLayer();
 
   const gitManagerLayer = GitManagerLive.pipe(
     Layer.provideMerge(gitCoreLayer),

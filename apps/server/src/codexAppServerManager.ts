@@ -8,6 +8,7 @@ import {
   EventId,
   ProviderItemId,
   ProviderRequestKind,
+  TerminalReadInput,
   type ProviderUserInputAnswers,
   ThreadId,
   TurnId,
@@ -20,13 +21,14 @@ import {
   ProviderInteractionMode,
 } from "@t3tools/contracts";
 import { normalizeModelSlug } from "@t3tools/shared/model";
-import { Effect, ServiceMap } from "effect";
+import { Effect, Schema, ServiceMap } from "effect";
 
 import {
   formatCodexCliUpgradeMessage,
   isCodexCliVersionSupported,
   parseCodexCliVersion,
 } from "./provider/codexCliVersion";
+import { TerminalManager } from "./terminal/Services/Manager";
 
 type PendingRequestKey = string;
 
@@ -164,6 +166,49 @@ const RECOVERABLE_THREAD_RESUME_ERROR_SNIPPETS = [
 const CODEX_DEFAULT_MODEL = "gpt-5.3-codex";
 const CODEX_SPARK_MODEL = "gpt-5.3-codex-spark";
 const CODEX_SPARK_DISABLED_PLAN_TYPES = new Set<CodexPlanType>(["free", "go", "plus"]);
+const decodeTerminalListToolArgs = Schema.decodeUnknownSync(Schema.Struct({}));
+const decodeTerminalReadToolArgs = Schema.decodeUnknownSync(
+  Schema.Struct({
+    terminalId: Schema.optional(Schema.String),
+    ordinal: Schema.optional(Schema.Int.check(Schema.isGreaterThan(0))),
+    scope: Schema.optional(Schema.Literals(["viewport", "tail", "full"])),
+    maxLines: Schema.optional(
+      Schema.Int.check(Schema.isGreaterThan(0)).check(Schema.isLessThanOrEqualTo(5_000)),
+    ),
+    grep: Schema.optional(Schema.String.check(Schema.isNonEmpty()).check(Schema.isMaxLength(512))),
+  }),
+);
+const CODEX_DYNAMIC_TOOL_SPECS = [
+  {
+    name: "list_thread_terminals",
+    description:
+      "List the terminals known for the current thread. Use this to count terminals or identify which terminal to inspect.",
+    inputSchema: {
+      type: "object",
+      properties: {},
+      additionalProperties: false,
+    },
+  },
+  {
+    name: "read_thread_terminal",
+    description:
+      "Read rendered terminal content for the current thread. Supports the visible viewport, the last N rendered lines, or the full rendered scrollback, plus optional substring filtering.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        terminalId: { type: "string" },
+        ordinal: { type: "integer", minimum: 1 },
+        scope: {
+          type: "string",
+          enum: ["viewport", "tail", "full"],
+        },
+        maxLines: { type: "integer", minimum: 1, maximum: 5000 },
+        grep: { type: "string", minLength: 1, maxLength: 512 },
+      },
+      additionalProperties: false,
+    },
+  },
+] as const;
 
 function asObject(value: unknown): Record<string, unknown> | undefined {
   if (!value || typeof value !== "object") {
@@ -515,10 +560,12 @@ export interface CodexAppServerManagerEvents {
 export class CodexAppServerManager extends EventEmitter<CodexAppServerManagerEvents> {
   private readonly sessions = new Map<ThreadId, CodexSessionContext>();
 
-  private runPromise: (effect: Effect.Effect<unknown, never>) => Promise<unknown>;
+  private runPromise: <A, E, R>(effect: Effect.Effect<A, E, R>) => Promise<A>;
   constructor(services?: ServiceMap.ServiceMap<never>) {
     super();
-    this.runPromise = services ? Effect.runPromiseWith(services) : Effect.runPromise;
+    this.runPromise = services
+      ? (Effect.runPromiseWith(services) as <A, E, R>(effect: Effect.Effect<A, E, R>) => Promise<A>)
+      : (Effect.runPromise as <A, E, R>(effect: Effect.Effect<A, E, R>) => Promise<A>);
   }
 
   async startSession(input: CodexAppServerStartSessionInput): Promise<ProviderSession> {
@@ -615,6 +662,7 @@ export class CodexAppServerManager extends EventEmitter<CodexAppServerManagerEve
 
       const threadStartParams = {
         ...sessionOverrides,
+        dynamicTools: CODEX_DYNAMIC_TOOL_SPECS,
         experimentalRawEvents: false,
       };
       const resumeThreadId = readResumeThreadId(input);
@@ -640,6 +688,7 @@ export class CodexAppServerManager extends EventEmitter<CodexAppServerManagerEve
           threadOpenMethod = "thread/resume";
           threadOpenResponse = await this.sendRequest(context, "thread/resume", {
             ...sessionOverrides,
+            dynamicTools: CODEX_DYNAMIC_TOOL_SPECS,
             threadId: resumeThreadId,
           });
         } catch (error) {
@@ -1234,6 +1283,11 @@ export class CodexAppServerManager extends EventEmitter<CodexAppServerManagerEve
       return;
     }
 
+    if (request.method === "item/tool/call") {
+      void this.handleDynamicToolCall(context, request);
+      return;
+    }
+
     if (request.method === "item/tool/requestUserInput") {
       return;
     }
@@ -1245,6 +1299,91 @@ export class CodexAppServerManager extends EventEmitter<CodexAppServerManagerEve
         message: `Unsupported server request: ${request.method}`,
       },
     });
+  }
+
+  private async handleDynamicToolCall(
+    context: CodexSessionContext,
+    request: JsonRpcRequest,
+  ): Promise<void> {
+    const tool = this.readString(request.params, "tool");
+    const rawArguments = this.readObject(this.readObject(request.params)?.arguments) ?? {};
+
+    try {
+      if (tool === "list_thread_terminals") {
+        decodeTerminalListToolArgs(rawArguments);
+        const result = await this.listThreadTerminals(context.session.threadId);
+        this.writeDynamicToolResponse(context, request.id, true, {
+          terminals: result,
+        });
+        return;
+      }
+
+      if (tool === "read_thread_terminal") {
+        const argumentsInput = decodeTerminalReadToolArgs(rawArguments);
+        const result = await this.readThreadTerminal({
+          threadId: context.session.threadId,
+          ...(argumentsInput.terminalId ? { terminalId: argumentsInput.terminalId } : {}),
+          ...(argumentsInput.ordinal ? { ordinal: argumentsInput.ordinal } : {}),
+          ...(argumentsInput.scope ? { scope: argumentsInput.scope } : {}),
+          ...(argumentsInput.maxLines ? { maxLines: argumentsInput.maxLines } : {}),
+          ...(argumentsInput.grep ? { grep: argumentsInput.grep } : {}),
+        });
+        this.writeDynamicToolResponse(context, request.id, true, result);
+        return;
+      }
+
+      this.writeDynamicToolResponse(
+        context,
+        request.id,
+        false,
+        `Unsupported dynamic tool: ${tool ?? "unknown"}`,
+      );
+    } catch (error) {
+      this.writeDynamicToolResponse(
+        context,
+        request.id,
+        false,
+        error instanceof Error ? error.message : "Dynamic tool execution failed.",
+      );
+    }
+  }
+
+  private writeDynamicToolResponse(
+    context: CodexSessionContext,
+    requestId: string | number,
+    success: boolean,
+    body: unknown,
+  ): void {
+    this.writeMessage(context, {
+      id: requestId,
+      result: {
+        success,
+        contentItems: [
+          {
+            type: "inputText",
+            text: typeof body === "string" ? body : JSON.stringify(body, null, 2),
+          },
+        ],
+      },
+    });
+  }
+
+  private async listThreadTerminals(threadId: ThreadId) {
+    return this.runPromise(
+      Effect.gen(function* () {
+        const terminalManager = yield* TerminalManager;
+        return yield* terminalManager.list({ threadId });
+      }),
+    );
+  }
+
+  private async readThreadTerminal(input: TerminalReadInput) {
+    return this.runPromise(
+      Effect.gen(function* () {
+        const terminalManager = yield* TerminalManager;
+        return yield* terminalManager.read(input);
+      }),
+    );
   }
 
   private handleResponse(context: CodexSessionContext, response: JsonRpcResponse): void {

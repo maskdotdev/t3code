@@ -36,9 +36,13 @@ import type {
   TerminalClearInput,
   TerminalCloseInput,
   TerminalEvent,
+  TerminalListInput,
   TerminalOpenInput,
+  TerminalReadInput,
+  TerminalRenderedSnapshot,
   TerminalResizeInput,
   TerminalSessionSnapshot,
+  TerminalSummary,
   TerminalWriteInput,
 } from "@t3tools/contracts";
 import { TerminalManager, type TerminalManagerShape } from "./terminal/Services/Manager";
@@ -196,6 +200,66 @@ class MockTerminalManager implements TerminalManagerShape {
           this.sessions.delete(key);
         }
       }
+    });
+
+  readonly list: TerminalManagerShape["list"] = (input: TerminalListInput) =>
+    Effect.sync(() =>
+      [...this.sessions.values()]
+        .filter((session) => session.threadId === input.threadId)
+        .toSorted((left, right) => left.terminalId.localeCompare(right.terminalId))
+        .map(
+          (session, index): TerminalSummary => ({
+            threadId: session.threadId,
+            terminalId: session.terminalId,
+            label: `Terminal ${index + 1}`,
+            ordinal: index + 1,
+            cwd: session.cwd,
+            status: session.status,
+            pid: session.pid,
+            hasRunningSubprocess: false,
+            updatedAt: session.updatedAt,
+          }),
+        ),
+    );
+
+  readonly read: TerminalManagerShape["read"] = (input: TerminalReadInput) =>
+    Effect.sync(() => {
+      const summaries = [...this.sessions.values()]
+        .filter((session) => session.threadId === input.threadId)
+        .toSorted((left, right) => left.terminalId.localeCompare(right.terminalId))
+        .map(
+          (session, index): TerminalRenderedSnapshot => ({
+            threadId: session.threadId,
+            terminalId: session.terminalId,
+            label: `Terminal ${index + 1}`,
+            ordinal: index + 1,
+            cwd: session.cwd,
+            status: session.status,
+            pid: session.pid,
+            hasRunningSubprocess: false,
+            updatedAt: session.updatedAt,
+            cols: 120,
+            rows: 30,
+            scope: input.scope ?? "viewport",
+            maxLines: input.maxLines ?? null,
+            grep: input.grep ?? null,
+            totalLines: session.history.length > 0 ? session.history.split(/\r?\n/g).length : 0,
+            returnedLineCount:
+              session.history.length > 0 ? session.history.split(/\r?\n/g).length : 0,
+            text: session.history,
+            lines: session.history.length > 0 ? session.history.split(/\r?\n/g) : [],
+          }),
+        );
+      const selected =
+        (input.terminalId
+          ? summaries.find((entry) => entry.terminalId === input.terminalId)
+          : undefined) ??
+        (input.ordinal ? summaries[input.ordinal - 1] : undefined) ??
+        summaries[0];
+      if (!selected) {
+        throw new Error(`Unknown terminal thread: ${input.threadId}`);
+      }
+      return selected;
     });
 
   readonly subscribe: TerminalManagerShape["subscribe"] = (listener) =>
@@ -491,7 +555,13 @@ describe("WebSocket Server", () => {
     const stateDir = options.stateDir ?? makeTempDir("t3code-ws-state-");
     const scope = await Effect.runPromise(Scope.make("sequential"));
     const persistenceLayer = options.persistenceLayer ?? SqlitePersistenceMemory;
-    const providerLayer = options.providerLayer ?? makeServerProviderLayer();
+    const terminalManagerLayer = Layer.succeed(
+      TerminalManager,
+      options.terminalManager ?? new MockTerminalManager(),
+    );
+    const providerLayer =
+      options.providerLayer ??
+      makeServerProviderLayer().pipe(Layer.provideMerge(terminalManagerLayer));
     const providerHealthLayer = Layer.succeed(
       ProviderHealth,
       options.providerHealth ?? defaultProviderHealthService,
@@ -517,9 +587,7 @@ describe("WebSocket Server", () => {
       options.gitCore
         ? Layer.succeed(GitCore, options.gitCore as unknown as GitCoreShape)
         : Layer.empty,
-      options.terminalManager
-        ? Layer.succeed(TerminalManager, options.terminalManager)
-        : Layer.empty,
+      terminalManagerLayer,
     );
 
     const runtimeLayer = Layer.merge(

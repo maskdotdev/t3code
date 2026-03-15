@@ -135,6 +135,32 @@ function createPendingUserInputHarness() {
   return { manager, context, requireSession, writeMessage, emitEvent };
 }
 
+function createDynamicToolHarness() {
+  const manager = new CodexAppServerManager();
+  const context = {
+    session: {
+      provider: "codex",
+      status: "ready",
+      threadId: "thread_1",
+      runtimeMode: "full-access",
+      model: "gpt-5.3-codex",
+      resumeCursor: { threadId: "thread_1" },
+      createdAt: "2026-02-10T00:00:00.000Z",
+      updatedAt: "2026-02-10T00:00:00.000Z",
+    },
+    pendingApprovals: new Map(),
+    pendingUserInputs: new Map(),
+  };
+
+  const writeMessage = vi
+    .spyOn(manager as unknown as { writeMessage: (...args: unknown[]) => void }, "writeMessage")
+    .mockImplementation(() => {});
+
+  return { manager, context, writeMessage };
+}
+
+type DynamicToolContext = ReturnType<typeof createDynamicToolHarness>["context"];
+
 describe("classifyCodexStderrLine", () => {
   it("ignores empty lines", () => {
     expect(classifyCodexStderrLine("   ")).toBeNull();
@@ -745,6 +771,194 @@ describe("respondToUserInput", () => {
     const request = Array.from(context.pendingApprovals.values())[0];
     expect(request?.requestKind).toBe("file-read");
     expect(request?.method).toBe("item/fileRead/requestApproval");
+  });
+
+  it("responds to list_thread_terminals dynamic tool calls", async () => {
+    const { manager, context, writeMessage } = createDynamicToolHarness();
+    const listThreadTerminals = vi
+      .spyOn(
+        manager as unknown as { listThreadTerminals: (threadId: ThreadId) => Promise<unknown> },
+        "listThreadTerminals",
+      )
+      .mockResolvedValue([
+        {
+          threadId: "thread_1",
+          terminalId: "default",
+          label: "Terminal 1",
+          ordinal: 1,
+          cwd: "/tmp/project",
+          status: "running",
+          pid: 1234,
+          hasRunningSubprocess: false,
+          updatedAt: "2026-02-10T00:00:00.000Z",
+        },
+      ]);
+
+    (
+      manager as unknown as {
+        handleServerRequest: (
+          context: DynamicToolContext,
+          request: Record<string, unknown>,
+        ) => void;
+      }
+    ).handleServerRequest(context, {
+      jsonrpc: "2.0",
+      id: 42,
+      method: "item/tool/call",
+      params: {
+        tool: "list_thread_terminals",
+        arguments: {},
+      },
+    });
+
+    await vi.waitFor(() => {
+      expect(listThreadTerminals).toHaveBeenCalledWith(asThreadId("thread_1"));
+      expect(writeMessage).toHaveBeenCalledWith(context, {
+        id: 42,
+        result: {
+          success: true,
+          contentItems: [
+            {
+              type: "inputText",
+              text: JSON.stringify(
+                {
+                  terminals: [
+                    {
+                      threadId: "thread_1",
+                      terminalId: "default",
+                      label: "Terminal 1",
+                      ordinal: 1,
+                      cwd: "/tmp/project",
+                      status: "running",
+                      pid: 1234,
+                      hasRunningSubprocess: false,
+                      updatedAt: "2026-02-10T00:00:00.000Z",
+                    },
+                  ],
+                },
+                null,
+                2,
+              ),
+            },
+          ],
+        },
+      });
+    });
+  });
+
+  it("responds to read_thread_terminal dynamic tool calls", async () => {
+    const { manager, context, writeMessage } = createDynamicToolHarness();
+    const readThreadTerminal = vi
+      .spyOn(
+        manager as unknown as {
+          readThreadTerminal: (input: {
+            threadId: ThreadId;
+            terminalId?: string;
+            ordinal?: number;
+            scope?: "viewport" | "tail" | "full";
+            maxLines?: number;
+            grep?: string;
+          }) => Promise<unknown>;
+        },
+        "readThreadTerminal",
+      )
+      .mockResolvedValue({
+        threadId: "thread_1",
+        terminalId: "build",
+        label: "Terminal 2",
+        ordinal: 2,
+        cwd: "/tmp/project",
+        status: "running",
+        pid: 2222,
+        hasRunningSubprocess: true,
+        updatedAt: "2026-02-10T00:00:00.000Z",
+        cols: 120,
+        rows: 30,
+        scope: "tail",
+        maxLines: 5,
+        grep: "build",
+        totalLines: 12,
+        returnedLineCount: 1,
+        text: "build output",
+        lines: ["build output"],
+      });
+
+    (
+      manager as unknown as {
+        handleServerRequest: (
+          context: DynamicToolContext,
+          request: Record<string, unknown>,
+        ) => void;
+      }
+    ).handleServerRequest(context, {
+      jsonrpc: "2.0",
+      id: 43,
+      method: "item/tool/call",
+      params: {
+        tool: "read_thread_terminal",
+        arguments: {
+          ordinal: 2,
+          scope: "tail",
+          maxLines: 5,
+          grep: "build",
+        },
+      },
+    });
+
+    await vi.waitFor(() => {
+      expect(readThreadTerminal).toHaveBeenCalledWith({
+        threadId: asThreadId("thread_1"),
+        ordinal: 2,
+        scope: "tail",
+        maxLines: 5,
+        grep: "build",
+      });
+      expect(writeMessage).toHaveBeenCalledWith(
+        context,
+        expect.objectContaining({
+          id: 43,
+          result: expect.objectContaining({
+            success: true,
+          }),
+        }),
+      );
+    });
+  });
+
+  it("fails cleanly for unsupported dynamic tool names", async () => {
+    const { manager, context, writeMessage } = createDynamicToolHarness();
+
+    (
+      manager as unknown as {
+        handleServerRequest: (
+          context: DynamicToolContext,
+          request: Record<string, unknown>,
+        ) => void;
+      }
+    ).handleServerRequest(context, {
+      jsonrpc: "2.0",
+      id: 44,
+      method: "item/tool/call",
+      params: {
+        tool: "unknown_tool",
+        arguments: {},
+      },
+    });
+
+    await vi.waitFor(() => {
+      expect(writeMessage).toHaveBeenCalledWith(context, {
+        id: 44,
+        result: {
+          success: false,
+          contentItems: [
+            {
+              type: "inputText",
+              text: "Unsupported dynamic tool: unknown_tool",
+            },
+          ],
+        },
+      });
+    });
   });
 });
 

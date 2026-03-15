@@ -254,6 +254,111 @@ describe("TerminalManager", () => {
     manager.dispose();
   });
 
+  it("reads the rendered terminal viewport from the server mirror", async () => {
+    const { manager, ptyAdapter } = makeManager();
+    await manager.open(openInput({ cols: 40, rows: 5 }));
+    const process = ptyAdapter.processes[0];
+    expect(process).toBeDefined();
+    if (!process) return;
+
+    process.emitData("echo hello\r\n");
+    process.emitData("hello world\r\n");
+
+    const snapshot = await manager.read({ threadId: "thread-1" });
+
+    expect(snapshot.label).toBe("Terminal 1");
+    expect(snapshot.scope).toBe("viewport");
+    expect(snapshot.text).toContain("hello world");
+
+    manager.dispose();
+  });
+
+  it("supports tail and grep reads over rendered terminal scrollback", async () => {
+    const { manager, ptyAdapter } = makeManager();
+    await manager.open(openInput({ cols: 40, rows: 5 }));
+    const process = ptyAdapter.processes[0];
+    expect(process).toBeDefined();
+    if (!process) return;
+
+    process.emitData("alpha\r\n");
+    process.emitData("beta error\r\n");
+    process.emitData("gamma\r\n");
+    process.emitData("delta error\r\n");
+
+    const tailSnapshot = await manager.read({
+      threadId: "thread-1",
+      scope: "tail",
+      maxLines: 2,
+    });
+    expect(tailSnapshot.scope).toBe("tail");
+    expect(tailSnapshot.lines).toEqual(["gamma", "delta error"]);
+
+    const grepSnapshot = await manager.read({
+      threadId: "thread-1",
+      scope: "full",
+      grep: "error",
+    });
+    expect(grepSnapshot.scope).toBe("full");
+    expect(grepSnapshot.lines).toEqual(["beta error", "delta error"]);
+    expect(grepSnapshot.totalLines).toBeGreaterThanOrEqual(4);
+
+    manager.dispose();
+  });
+
+  it("lists terminals using stable creation order and supports persisted reads by ordinal", async () => {
+    const { manager, logsDir, ptyAdapter } = makeManager();
+    await manager.open(openInput({ terminalId: "alpha", cols: 40, rows: 5 }));
+    await manager.open(openInput({ terminalId: "beta", cols: 40, rows: 5 }));
+
+    ptyAdapter.processes[0]?.emitData("first terminal\r\n");
+    ptyAdapter.processes[1]?.emitData("second terminal\r\n");
+
+    const initialList = await manager.list({ threadId: "thread-1" });
+    expect(initialList.map((entry) => [entry.label, entry.terminalId])).toEqual([
+      ["Terminal 1", "alpha"],
+      ["Terminal 2", "beta"],
+    ]);
+
+    manager.dispose();
+
+    const reloadedManager = new TerminalManagerRuntime({
+      logsDir,
+      ptyAdapter: new FakePtyAdapter(),
+      shellResolver: () => "/bin/bash",
+    });
+
+    try {
+      const reloadedList = await reloadedManager.list({ threadId: "thread-1" });
+      expect(reloadedList.map((entry) => [entry.label, entry.terminalId, entry.status])).toEqual([
+        ["Terminal 1", "alpha", "exited"],
+        ["Terminal 2", "beta", "exited"],
+      ]);
+
+      const snapshot = await reloadedManager.read({ threadId: "thread-1", ordinal: 2 });
+      expect(snapshot.terminalId).toBe("beta");
+      expect(snapshot.text).toContain("second terminal");
+    } finally {
+      reloadedManager.dispose();
+    }
+  });
+
+  it("clears the mirrored viewport when the terminal is cleared", async () => {
+    const { manager, ptyAdapter } = makeManager();
+    await manager.open(openInput({ cols: 40, rows: 5 }));
+    const process = ptyAdapter.processes[0];
+    expect(process).toBeDefined();
+    if (!process) return;
+
+    process.emitData("before clear\r\n");
+    expect((await manager.read({ threadId: "thread-1" })).text).toContain("before clear");
+
+    await manager.clear({ threadId: "thread-1" });
+
+    expect((await manager.read({ threadId: "thread-1" })).text).not.toContain("before clear");
+
+    manager.dispose();
+  });
+
   it("resizes running terminal on open when a different size is requested", async () => {
     const { manager, ptyAdapter } = makeManager();
     await manager.open(openInput({ cols: 100, rows: 24 }));

@@ -10,11 +10,15 @@ import {
   TerminalClearInput,
   TerminalCloseInput,
   TerminalEvent,
+  TerminalListInput,
   TerminalOpenInput,
+  TerminalReadInput,
+  TerminalRenderedSnapshot,
   TerminalResizeInput,
   TerminalRestartInput,
   TerminalSessionSnapshot,
   TerminalSessionStatus,
+  TerminalSummary,
   TerminalWriteInput,
 } from "@t3tools/contracts";
 import { PtyProcess } from "./PTY";
@@ -28,6 +32,7 @@ export class TerminalError extends Schema.TaggedErrorClass<TerminalError>()("Ter
 export interface TerminalSessionState {
   threadId: string;
   terminalId: string;
+  createdAt: string;
   cwd: string;
   status: TerminalSessionStatus;
   pid: number | null;
@@ -98,6 +103,20 @@ export interface TerminalManagerShape {
    * When `terminalId` is omitted, closes all sessions for the thread.
    */
   readonly close: (input: TerminalCloseInput) => Effect.Effect<void, TerminalError>;
+
+  /**
+   * List known terminals for a thread with server-authoritative labels.
+   */
+  readonly list: (
+    input: TerminalListInput,
+  ) => Effect.Effect<ReadonlyArray<TerminalSummary>, TerminalError>;
+
+  /**
+   * Read rendered terminal content for a thread terminal.
+   */
+  readonly read: (
+    input: TerminalReadInput,
+  ) => Effect.Effect<TerminalRenderedSnapshot, TerminalError>;
 
   /**
    * Subscribe to terminal runtime events.
