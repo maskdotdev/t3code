@@ -16,6 +16,7 @@ import {
   readCodexAccountSnapshot,
   resolveCodexModelForAccount,
 } from "./codexAppServerManager";
+import * as codexTerminalTools from "./provider/codexTerminalTools";
 
 const asThreadId = (value: string): ThreadId => ThreadId.makeUnsafe(value);
 
@@ -775,24 +776,23 @@ describe("respondToUserInput", () => {
 
   it("responds to list_thread_terminals dynamic tool calls", async () => {
     const { manager, context, writeMessage } = createDynamicToolHarness();
-    const listThreadTerminals = vi
-      .spyOn(
-        manager as unknown as { listThreadTerminals: (threadId: ThreadId) => Promise<unknown> },
-        "listThreadTerminals",
-      )
-      .mockResolvedValue([
-        {
-          threadId: "thread_1",
-          terminalId: "default",
-          label: "Terminal 1",
-          ordinal: 1,
-          cwd: "/tmp/project",
-          status: "running",
-          pid: 1234,
-          hasRunningSubprocess: false,
-          updatedAt: "2026-02-10T00:00:00.000Z",
-        },
-      ]);
+    const executeDynamicTool = vi
+      .spyOn(codexTerminalTools, "executeCodexTerminalDynamicTool")
+      .mockResolvedValue({
+        terminals: [
+          {
+            threadId: "thread_1",
+            terminalId: "default",
+            label: "Terminal 1",
+            ordinal: 1,
+            cwd: "/tmp/project",
+            status: "running",
+            pid: 1234,
+            hasRunningSubprocess: false,
+            updatedAt: "2026-02-10T00:00:00.000Z",
+          },
+        ],
+      });
 
     (
       manager as unknown as {
@@ -812,7 +812,13 @@ describe("respondToUserInput", () => {
     });
 
     await vi.waitFor(() => {
-      expect(listThreadTerminals).toHaveBeenCalledWith(asThreadId("thread_1"));
+      expect(executeDynamicTool).toHaveBeenCalledWith(
+        "list_thread_terminals",
+        {},
+        expect.objectContaining({
+          threadId: asThreadId("thread_1"),
+        }),
+      );
       expect(writeMessage).toHaveBeenCalledWith(context, {
         id: 42,
         result: {
@@ -848,20 +854,8 @@ describe("respondToUserInput", () => {
 
   it("responds to read_thread_terminal dynamic tool calls", async () => {
     const { manager, context, writeMessage } = createDynamicToolHarness();
-    const readThreadTerminal = vi
-      .spyOn(
-        manager as unknown as {
-          readThreadTerminal: (input: {
-            threadId: ThreadId;
-            terminalId?: string;
-            ordinal?: number;
-            scope?: "viewport" | "tail" | "full";
-            maxLines?: number;
-            grep?: string;
-          }) => Promise<unknown>;
-        },
-        "readThreadTerminal",
-      )
+    const executeDynamicTool = vi
+      .spyOn(codexTerminalTools, "executeCodexTerminalDynamicTool")
       .mockResolvedValue({
         threadId: "thread_1",
         terminalId: "build",
@@ -906,13 +900,18 @@ describe("respondToUserInput", () => {
     });
 
     await vi.waitFor(() => {
-      expect(readThreadTerminal).toHaveBeenCalledWith({
-        threadId: asThreadId("thread_1"),
-        ordinal: 2,
-        scope: "tail",
-        maxLines: 5,
-        grep: "build",
-      });
+      expect(executeDynamicTool).toHaveBeenCalledWith(
+        "read_thread_terminal",
+        {
+          ordinal: 2,
+          scope: "tail",
+          maxLines: 5,
+          grep: "build",
+        },
+        expect.objectContaining({
+          threadId: asThreadId("thread_1"),
+        }),
+      );
       expect(writeMessage).toHaveBeenCalledWith(
         context,
         expect.objectContaining({

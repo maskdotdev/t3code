@@ -79,7 +79,7 @@ export function makeServerTerminalLayer() {
   );
 }
 
-export function makeServerRuntimeServicesLayer() {
+export function makeServerRuntimeServicesLayer(terminalLayer = makeServerTerminalLayer()) {
   const gitCoreLayer = GitCoreLive.pipe(Layer.provideMerge(GitServiceLive));
   const textGenerationLayer = CodexTextGenerationLive;
 
@@ -117,8 +117,6 @@ export function makeServerRuntimeServicesLayer() {
     Layer.provideMerge(providerCommandReactorLayer),
     Layer.provideMerge(checkpointReactorLayer),
   );
-
-  const terminalLayer = makeServerTerminalLayer();
 
   const gitManagerLayer = GitManagerLive.pipe(
     Layer.provideMerge(gitCoreLayer),

@@ -7,8 +7,10 @@ import {
   TerminalCloseInput,
   TerminalEvent,
   TerminalListInput,
+  TerminalListToolInput,
   TerminalOpenInput,
   TerminalReadInput,
+  TerminalReadToolInput,
   TerminalRenderedSnapshot,
   TerminalResizeInput,
   TerminalSessionSnapshot,
@@ -164,6 +166,12 @@ describe("TerminalListInput", () => {
   });
 });
 
+describe("TerminalListToolInput", () => {
+  it("accepts an empty object", () => {
+    expect(decodes(TerminalListToolInput, {})).toBe(true);
+  });
+});
+
 describe("TerminalReadInput", () => {
   it("accepts terminal id or ordinal selectors", () => {
     expect(
@@ -196,6 +204,34 @@ describe("TerminalReadInput", () => {
       decodes(TerminalReadInput, {
         threadId: "thread-1",
         ordinal: 0,
+      }),
+    ).toBe(false);
+  });
+
+  it("rejects viewport scope", () => {
+    expect(
+      decodes(TerminalReadInput, {
+        threadId: "thread-1",
+        scope: "viewport",
+      }),
+    ).toBe(false);
+  });
+});
+
+describe("TerminalReadToolInput", () => {
+  it("accepts terminal selectors and defaults scope", () => {
+    const parsed = decodeSync(TerminalReadToolInput, {
+      terminalId: "build",
+      maxLines: 25,
+    });
+    expect(parsed.terminalId).toBe("build");
+    expect(parsed.scope).toBe("tail");
+  });
+
+  it("rejects viewport scope", () => {
+    expect(
+      decodes(TerminalReadToolInput, {
+        scope: "viewport",
       }),
     ).toBe(false);
   });
