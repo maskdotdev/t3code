@@ -95,6 +95,14 @@ interface MountedChatView {
   router: ReturnType<typeof getRouter>;
 }
 
+interface LexicalEditorHandleLike {
+  getEditorState: () => {
+    toJSON: () => unknown;
+  };
+  parseEditorState: (serializedEditorState: unknown) => unknown;
+  setEditorState: (nextEditorState: unknown) => void;
+}
+
 function isoAt(offsetSeconds: number): string {
   return new Date(BASE_TIME_MS + offsetSeconds * 1_000).toISOString();
 }
@@ -551,6 +559,16 @@ async function waitForComposerEditor(): Promise<HTMLElement> {
   return waitForElement(
     () => document.querySelector<HTMLElement>('[contenteditable="true"]'),
     "Unable to find composer editor.",
+  );
+}
+
+function lexicalEditorFromComposer(composerEditor: HTMLElement): LexicalEditorHandleLike | null {
+  return (
+    (
+      composerEditor as HTMLElement & {
+        __lexicalEditor?: LexicalEditorHandleLike;
+      }
+    ).__lexicalEditor ?? null
   );
 }
 
@@ -1111,6 +1129,97 @@ describe("ChatView timeline estimator parity (full app)", () => {
       );
     } finally {
       await mounted.cleanup();
+    }
+  });
+
+  it("re-syncs restored terminal context payloads from editor state", async () => {
+    const restoredLabel = "Terminal 1 lines 4-5";
+    const snapshot = createSnapshotForTargetUser({
+      targetMessageId: "msg-user-terminal-pill-undo" as MessageId,
+      targetText: "terminal pill undo target",
+    });
+    useComposerDraftStore.getState().addTerminalContext(
+      THREAD_ID,
+      createTerminalContext({
+        id: "ctx-restored",
+        terminalLabel: "Terminal 1",
+        lineStart: 4,
+        lineEnd: 5,
+        text: "git status\nOn branch main",
+      }),
+    );
+
+    const mounted = await mountChatView({
+      viewport: DEFAULT_VIEWPORT,
+      snapshot,
+    });
+
+    try {
+      await vi.waitFor(
+        () => {
+          expect(document.body.textContent).toContain(restoredLabel);
+        },
+        { timeout: 8_000, interval: 16 },
+      );
+
+      const composerEditor = await waitForComposerEditor();
+      const lexicalEditor = lexicalEditorFromComposer(composerEditor);
+      expect(lexicalEditor, "Expected Lexical editor handle on composer root.").toBeTruthy();
+      const savedEditorState = lexicalEditor!.getEditorState().toJSON();
+
+      composerEditor.focus();
+      composerEditor.dispatchEvent(
+        new KeyboardEvent("keydown", {
+          key: "Backspace",
+          bubbles: true,
+          cancelable: true,
+        }),
+      );
+
+      await vi.waitFor(
+        () => {
+          expect(useComposerDraftStore.getState().draftsByThreadId[THREAD_ID]).toBeUndefined();
+          expect(document.body.textContent).not.toContain(restoredLabel);
+        },
+        { timeout: 8_000, interval: 16 },
+      );
+
+      lexicalEditor!.setEditorState(lexicalEditor!.parseEditorState(savedEditorState));
+
+      await vi.waitFor(
+        () => {
+          const draft = useComposerDraftStore.getState().draftsByThreadId[THREAD_ID];
+          expect(draft?.prompt).toBe(INLINE_TERMINAL_CONTEXT_PLACEHOLDER);
+          expect(draft?.terminalContexts).toMatchObject([
+            {
+              id: "ctx-restored",
+              terminalLabel: "Terminal 1",
+              lineStart: 4,
+              lineEnd: 5,
+              text: "git status\nOn branch main",
+            },
+          ]);
+        },
+        { timeout: 8_000, interval: 16 },
+      );
+    } finally {
+      await mounted.cleanup();
+    }
+
+    const remounted = await mountChatView({
+      viewport: DEFAULT_VIEWPORT,
+      snapshot,
+    });
+
+    try {
+      await vi.waitFor(
+        () => {
+          expect(document.body.textContent).toContain(restoredLabel);
+        },
+        { timeout: 8_000, interval: 16 },
+      );
+    } finally {
+      await remounted.cleanup();
     }
   });
 

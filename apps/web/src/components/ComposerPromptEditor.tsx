@@ -283,6 +283,17 @@ function terminalContextSignature(contexts: ReadonlyArray<TerminalContextDraft>)
     .join("\u001e");
 }
 
+function cloneTerminalContext(context: TerminalContextDraft): TerminalContextDraft {
+  return { ...context };
+}
+
+function terminalContextArraysEqual(
+  left: ReadonlyArray<TerminalContextDraft>,
+  right: ReadonlyArray<TerminalContextDraft>,
+): boolean {
+  return terminalContextSignature(left) === terminalContextSignature(right);
+}
+
 function clampExpandedCursor(value: string, cursor: number): number {
   if (!Number.isFinite(cursor)) return value.length;
   return Math.max(0, Math.min(value.length, Math.floor(cursor)));
@@ -613,12 +624,12 @@ function $setComposerEditorPrompt(
   }
 }
 
-function collectTerminalContextIds(node: LexicalNode): string[] {
+function collectTerminalContexts(node: LexicalNode): TerminalContextDraft[] {
   if (node instanceof ComposerTerminalContextNode) {
-    return [node.__context.id];
+    return [cloneTerminalContext(node.__context)];
   }
   if ($isElementNode(node)) {
-    return node.getChildren().flatMap((child) => collectTerminalContextIds(child));
+    return node.getChildren().flatMap((child) => collectTerminalContexts(child));
   }
   return [];
 }
@@ -631,7 +642,7 @@ export interface ComposerPromptEditorHandle {
     value: string;
     cursor: number;
     expandedCursor: number;
-    terminalContextIds: string[];
+    terminalContexts: TerminalContextDraft[];
   };
 }
 
@@ -648,7 +659,7 @@ interface ComposerPromptEditorProps {
     nextCursor: number,
     expandedCursor: number,
     cursorAdjacentToMention: boolean,
-    terminalContextIds: string[],
+    terminalContexts: TerminalContextDraft[],
   ) => void;
   onCommandKeyDown?: (
     key: "ArrowDown" | "ArrowUp" | "Enter" | "Tab",
@@ -900,7 +911,7 @@ function ComposerPromptEditorInner({
     value,
     cursor: initialCursor,
     expandedCursor: expandCollapsedComposerCursor(value, initialCursor),
-    terminalContextIds: terminalContexts.map((context) => context.id),
+    terminalContexts: terminalContexts.map(cloneTerminalContext),
   });
   const isApplyingControlledUpdateRef = useRef(false);
   const terminalContextActions = useMemo(
@@ -932,7 +943,7 @@ function ComposerPromptEditorInner({
       value,
       cursor: normalizedCursor,
       expandedCursor: expandCollapsedComposerCursor(value, normalizedCursor),
-      terminalContextIds: terminalContexts.map((context) => context.id),
+      terminalContexts: terminalContexts.map(cloneTerminalContext),
     };
     terminalContextsSignatureRef.current = terminalContextsSignature;
 
@@ -970,14 +981,14 @@ function ComposerPromptEditorInner({
         value: snapshotRef.current.value,
         cursor: boundedCursor,
         expandedCursor: expandCollapsedComposerCursor(snapshotRef.current.value, boundedCursor),
-        terminalContextIds: snapshotRef.current.terminalContextIds,
+        terminalContexts: snapshotRef.current.terminalContexts.map(cloneTerminalContext),
       };
       onChangeRef.current(
         snapshotRef.current.value,
         boundedCursor,
         snapshotRef.current.expandedCursor,
         false,
-        snapshotRef.current.terminalContextIds,
+        snapshotRef.current.terminalContexts.map(cloneTerminalContext),
       );
     },
     [editor],
@@ -987,7 +998,7 @@ function ComposerPromptEditorInner({
     value: string;
     cursor: number;
     expandedCursor: number;
-    terminalContextIds: string[];
+    terminalContexts: TerminalContextDraft[];
   } => {
     let snapshot = snapshotRef.current;
     editor.getEditorState().read(() => {
@@ -1005,12 +1016,12 @@ function ComposerPromptEditorInner({
         nextValue,
         $readExpandedSelectionOffsetFromEditorState(fallbackExpandedCursor),
       );
-      const terminalContextIds = collectTerminalContextIds($getRoot());
+      const terminalContexts = collectTerminalContexts($getRoot());
       snapshot = {
         value: nextValue,
         cursor: nextCursor,
         expandedCursor: nextExpandedCursor,
-        terminalContextIds,
+        terminalContexts,
       };
     });
     snapshotRef.current = snapshot;
@@ -1053,14 +1064,13 @@ function ComposerPromptEditorInner({
         nextValue,
         $readExpandedSelectionOffsetFromEditorState(fallbackExpandedCursor),
       );
-      const terminalContextIds = collectTerminalContextIds($getRoot());
+      const terminalContexts = collectTerminalContexts($getRoot());
       const previousSnapshot = snapshotRef.current;
       if (
         previousSnapshot.value === nextValue &&
         previousSnapshot.cursor === nextCursor &&
         previousSnapshot.expandedCursor === nextExpandedCursor &&
-        previousSnapshot.terminalContextIds.length === terminalContextIds.length &&
-        previousSnapshot.terminalContextIds.every((id, index) => id === terminalContextIds[index])
+        terminalContextArraysEqual(previousSnapshot.terminalContexts, terminalContexts)
       ) {
         return;
       }
@@ -1071,7 +1081,7 @@ function ComposerPromptEditorInner({
         value: nextValue,
         cursor: nextCursor,
         expandedCursor: nextExpandedCursor,
-        terminalContextIds,
+        terminalContexts,
       };
       const cursorAdjacentToMention =
         isCollapsedCursorAdjacentToInlineToken(nextValue, nextCursor, "left") ||
@@ -1081,7 +1091,7 @@ function ComposerPromptEditorInner({
         nextCursor,
         nextExpandedCursor,
         cursorAdjacentToMention,
-        terminalContextIds,
+        terminalContexts,
       );
     });
   }, []);

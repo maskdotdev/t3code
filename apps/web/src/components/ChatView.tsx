@@ -195,22 +195,25 @@ const extendReplacementRangeForTrailingSpace = (
   return text[rangeEnd] === " " ? rangeEnd + 1 : rangeEnd;
 };
 
-const syncTerminalContextsByIds = (
-  contexts: ReadonlyArray<TerminalContextDraft>,
-  ids: ReadonlyArray<string>,
-): TerminalContextDraft[] => {
-  const contextsById = new Map(contexts.map((context) => [context.id, context]));
-  return ids.flatMap((id) => {
-    const context = contextsById.get(id);
-    return context ? [context] : [];
-  });
-};
-
-const terminalContextIdListsEqual = (
-  contexts: ReadonlyArray<TerminalContextDraft>,
-  ids: ReadonlyArray<string>,
+const terminalContextsEqual = (
+  left: ReadonlyArray<TerminalContextDraft>,
+  right: ReadonlyArray<TerminalContextDraft>,
 ): boolean =>
-  contexts.length === ids.length && contexts.every((context, index) => context.id === ids[index]);
+  left.length === right.length &&
+  left.every((context, index) => {
+    const other = right[index];
+    return (
+      other !== undefined &&
+      context.id === other.id &&
+      context.threadId === other.threadId &&
+      context.terminalId === other.terminalId &&
+      context.terminalLabel === other.terminalLabel &&
+      context.lineStart === other.lineStart &&
+      context.lineEnd === other.lineEnd &&
+      context.text === other.text &&
+      context.createdAt === other.createdAt
+    );
+  });
 
 interface ChatViewProps {
   threadId: ThreadId;
@@ -1180,7 +1183,7 @@ export default function ChatView({ threadId }: ChatViewProps) {
         value: promptRef.current,
         cursor: composerCursor,
         expandedCursor: expandCollapsedComposerCursor(promptRef.current, composerCursor),
-        terminalContextIds: composerTerminalContexts.map((context) => context.id),
+        terminalContexts: composerTerminalContexts,
       };
       const insertion = insertInlineTerminalContextPlaceholder(
         snapshot.value,
@@ -3138,7 +3141,7 @@ export default function ChatView({ threadId }: ChatViewProps) {
     value: string;
     cursor: number;
     expandedCursor: number;
-    terminalContextIds: string[];
+    terminalContexts: TerminalContextDraft[];
   } => {
     const editorSnapshot = composerEditorRef.current?.readSnapshot();
     if (editorSnapshot) {
@@ -3148,7 +3151,7 @@ export default function ChatView({ threadId }: ChatViewProps) {
       value: promptRef.current,
       cursor: composerCursor,
       expandedCursor: expandCollapsedComposerCursor(promptRef.current, composerCursor),
-      terminalContextIds: composerTerminalContexts.map((context) => context.id),
+      terminalContexts: composerTerminalContexts,
     };
   }, [composerCursor, composerTerminalContexts]);
 
@@ -3266,7 +3269,7 @@ export default function ChatView({ threadId }: ChatViewProps) {
       nextCursor: number,
       expandedCursor: number,
       cursorAdjacentToMention: boolean,
-      terminalContextIds: string[],
+      terminalContexts: TerminalContextDraft[],
     ) => {
       if (activePendingProgress?.activeQuestion && activePendingUserInput) {
         onChangeActivePendingUserInputCustomAnswer(
@@ -3280,11 +3283,8 @@ export default function ChatView({ threadId }: ChatViewProps) {
       }
       promptRef.current = nextPrompt;
       setPrompt(nextPrompt);
-      if (!terminalContextIdListsEqual(composerTerminalContexts, terminalContextIds)) {
-        setComposerDraftTerminalContexts(
-          threadId,
-          syncTerminalContextsByIds(composerTerminalContexts, terminalContextIds),
-        );
+      if (!terminalContextsEqual(composerTerminalContexts, terminalContexts)) {
+        setComposerDraftTerminalContexts(threadId, terminalContexts);
       }
       setComposerCursor(nextCursor);
       setComposerTrigger(
