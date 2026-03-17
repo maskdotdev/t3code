@@ -1,3 +1,5 @@
+import { formatInlineTerminalContextLabel as formatInlineTerminalContextSelectionLabel } from "~/lib/terminalContext";
+
 const TERMINAL_CONTEXT_HEADER_PATTERN = /^(.*?)\s+line(?:s)?\s+(\d+)(?:-(\d+))?$/i;
 
 export function buildInlineTerminalContextText(
@@ -19,9 +21,35 @@ export function formatInlineTerminalContextLabel(header: string): string {
     return `@${trimmedHeader.toLowerCase().replace(/\s+/g, "-")}`;
   }
 
-  const terminalLabel = match[1]?.trim().toLowerCase().replace(/\s+/g, "-") ?? "terminal";
-  const rangeStart = match[2] ?? "";
-  const rangeEnd = match[3] ?? "";
-  const range = rangeEnd.length > 0 ? `${rangeStart}-${rangeEnd}` : rangeStart;
-  return `@${terminalLabel}:${range}`;
+  const lineStart = Number.parseInt(match[2] ?? "", 10);
+  const lineEnd = Number.parseInt(match[3] ?? match[2] ?? "", 10);
+  if (!Number.isFinite(lineStart) || !Number.isFinite(lineEnd)) {
+    return `@${trimmedHeader.toLowerCase().replace(/\s+/g, "-")}`;
+  }
+
+  return formatInlineTerminalContextSelectionLabel({
+    terminalLabel: match[1]?.trim() || "terminal",
+    lineStart,
+    lineEnd,
+  });
+}
+
+export function textContainsInlineTerminalContextLabels(
+  text: string,
+  contexts: ReadonlyArray<{
+    header: string;
+  }>,
+): boolean {
+  let searchStartIndex = 0;
+
+  for (const context of contexts) {
+    const label = formatInlineTerminalContextLabel(context.header);
+    const matchIndex = text.indexOf(label, searchStartIndex);
+    if (matchIndex === -1) {
+      return false;
+    }
+    searchStartIndex = matchIndex + label.length;
+  }
+
+  return true;
 }

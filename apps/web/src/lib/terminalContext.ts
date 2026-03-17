@@ -39,8 +39,22 @@ export const INLINE_TERMINAL_CONTEXT_PLACEHOLDER = "\uFFFC";
 const TRAILING_TERMINAL_CONTEXT_BLOCK_PATTERN =
   /\n*<terminal_context>\n([\s\S]*?)\n<\/terminal_context>\s*$/;
 
-function normalizeTerminalContextText(text: string): string {
+export function normalizeTerminalContextText(text: string): string {
   return text.replace(/\r\n/g, "\n").replace(/^\n+|\n+$/g, "");
+}
+
+export function hasTerminalContextText(context: { text: string }): boolean {
+  return normalizeTerminalContextText(context.text).length > 0;
+}
+
+export function isTerminalContextExpired(context: { text: string }): boolean {
+  return !hasTerminalContextText(context);
+}
+
+export function filterTerminalContextsWithText<T extends { text: string }>(
+  contexts: ReadonlyArray<T>,
+): T[] {
+  return contexts.filter((context) => hasTerminalContextText(context));
 }
 
 function previewTerminalContextText(text: string): string {
@@ -94,6 +108,19 @@ export function formatTerminalContextLabel(selection: {
   return `${selection.terminalLabel} ${formatTerminalContextRange(selection)}`;
 }
 
+export function formatInlineTerminalContextLabel(selection: {
+  terminalLabel: string;
+  lineStart: number;
+  lineEnd: number;
+}): string {
+  const terminalLabel = selection.terminalLabel.trim().toLowerCase().replace(/\s+/g, "-");
+  const range =
+    selection.lineStart === selection.lineEnd
+      ? `${selection.lineStart}`
+      : `${selection.lineStart}-${selection.lineEnd}`;
+  return `@${terminalLabel}:${range}`;
+}
+
 export function buildTerminalContextPreviewTitle(
   contexts: ReadonlyArray<TerminalContextSelection>,
 ): string | null {
@@ -143,11 +170,38 @@ export function buildTerminalContextBlock(
   return ["<terminal_context>", ...lines, "</terminal_context>"].join("\n");
 }
 
+export function materializeInlineTerminalContextPrompt(
+  prompt: string,
+  contexts: ReadonlyArray<{
+    terminalLabel: string;
+    lineStart: number;
+    lineEnd: number;
+  }>,
+): string {
+  let nextContextIndex = 0;
+  let result = "";
+
+  for (const char of prompt) {
+    if (char !== INLINE_TERMINAL_CONTEXT_PLACEHOLDER) {
+      result += char;
+      continue;
+    }
+    const context = contexts[nextContextIndex] ?? null;
+    nextContextIndex += 1;
+    if (!context) {
+      continue;
+    }
+    result += formatInlineTerminalContextLabel(context);
+  }
+
+  return result;
+}
+
 export function appendTerminalContextsToPrompt(
   prompt: string,
   contexts: ReadonlyArray<TerminalContextSelection>,
 ): string {
-  const trimmedPrompt = prompt.trim();
+  const trimmedPrompt = materializeInlineTerminalContextPrompt(prompt, contexts).trim();
   const contextBlock = buildTerminalContextBlock(contexts);
   if (contextBlock.length === 0) {
     return trimmedPrompt;

@@ -129,6 +129,7 @@ import {
 } from "../composerDraftStore";
 import {
   appendTerminalContextsToPrompt,
+  filterTerminalContextsWithText,
   formatTerminalContextLabel,
   insertInlineTerminalContextPlaceholder,
   removeInlineTerminalContextPlaceholder,
@@ -2320,6 +2321,8 @@ export default function ChatView({ threadId }: ChatViewProps) {
     }
     const promptForSend = promptRef.current;
     const trimmed = stripInlineTerminalContextPlaceholders(promptForSend).trim();
+    const sendableComposerTerminalContexts =
+      filterTerminalContextsWithText(composerTerminalContexts);
     if (showPlanFollowUpPrompt && activeProposedPlan) {
       const followUp = resolvePlanFollowUpSubmission({
         draftText: trimmed,
@@ -2337,7 +2340,7 @@ export default function ChatView({ threadId }: ChatViewProps) {
       return;
     }
     const standaloneSlashCommand =
-      composerImages.length === 0 && composerTerminalContexts.length === 0
+      composerImages.length === 0 && sendableComposerTerminalContexts.length === 0
         ? parseStandaloneComposerSlashCommand(trimmed)
         : null;
     if (standaloneSlashCommand) {
@@ -2349,7 +2352,9 @@ export default function ChatView({ threadId }: ChatViewProps) {
       setComposerTrigger(null);
       return;
     }
-    if (!trimmed && composerImages.length === 0 && composerTerminalContexts.length === 0) return;
+    if (!trimmed && composerImages.length === 0 && sendableComposerTerminalContexts.length === 0) {
+      return;
+    }
     if (!activeProject) return;
     const threadIdForSend = activeThread.id;
     const isFirstMessage = !isServerThread || activeThread.messages.length === 0;
@@ -2374,9 +2379,9 @@ export default function ChatView({ threadId }: ChatViewProps) {
     beginSendPhase(baseBranchForWorktree ? "preparing-worktree" : "sending-turn");
 
     const composerImagesSnapshot = [...composerImages];
-    const composerTerminalContextsSnapshot = [...composerTerminalContexts];
+    const composerTerminalContextsSnapshot = [...sendableComposerTerminalContexts];
     const messageTextForSend = appendTerminalContextsToPrompt(
-      trimmed,
+      promptForSend,
       composerTerminalContextsSnapshot,
     );
     const messageIdForSend = newMessageId();

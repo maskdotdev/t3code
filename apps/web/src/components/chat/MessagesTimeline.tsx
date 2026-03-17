@@ -42,7 +42,7 @@ import { ChangedFilesTree } from "./ChangedFilesTree";
 import { DiffStatLabel, hasNonZeroStat } from "./DiffStatLabel";
 import { MessageCopyButton } from "./MessageCopyButton";
 import { computeMessageDurationStart, normalizeCompactToolLabel } from "./MessagesTimeline.logic";
-import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
+import { TerminalContextInlineChip } from "./TerminalContextInlineChip";
 import {
   deriveDisplayedUserMessageState,
   type ParsedTerminalContextEntry,
@@ -53,6 +53,7 @@ import { formatTimestamp } from "../../timestampFormat";
 import {
   buildInlineTerminalContextText,
   formatInlineTerminalContextLabel,
+  textContainsInlineTerminalContextLabels,
 } from "./userMessageTerminalContexts";
 
 const MAX_VISIBLE_WORK_LOG_ENTRIES = 6;
@@ -662,25 +663,12 @@ function formatMessageMeta(
 
 const UserMessageTerminalContextInlineLabel = memo(
   function UserMessageTerminalContextInlineLabel(props: { context: ParsedTerminalContextEntry }) {
-    const label =
+    const tooltipText =
       props.context.body.length > 0
         ? `${props.context.header}\n${props.context.body}`
         : props.context.header;
 
-    return (
-      <Tooltip>
-        <TooltipTrigger
-          render={
-            <span className="font-medium text-foreground/88">
-              {formatInlineTerminalContextLabel(props.context.header)}
-            </span>
-          }
-        />
-        <TooltipPopup side="top" className="max-w-80 whitespace-pre-wrap leading-tight">
-          {label}
-        </TooltipPopup>
-      </Tooltip>
-    );
+    return <TerminalContextInlineChip label={props.context.header} tooltipText={tooltipText} />;
   },
 );
 
@@ -689,8 +677,55 @@ const UserMessageBody = memo(function UserMessageBody(props: {
   terminalContexts: ParsedTerminalContextEntry[];
 }) {
   if (props.terminalContexts.length > 0) {
+    const hasEmbeddedInlineLabels = textContainsInlineTerminalContextLabels(
+      props.text,
+      props.terminalContexts,
+    );
     const inlinePrefix = buildInlineTerminalContextText(props.terminalContexts);
     const inlineNodes: ReactNode[] = [];
+
+    if (hasEmbeddedInlineLabels) {
+      let cursor = 0;
+
+      for (const context of props.terminalContexts) {
+        const label = formatInlineTerminalContextLabel(context.header);
+        const matchIndex = props.text.indexOf(label, cursor);
+        if (matchIndex === -1) {
+          inlineNodes.length = 0;
+          break;
+        }
+        if (matchIndex > cursor) {
+          inlineNodes.push(
+            <span key={`user-terminal-context-inline-before:${context.header}:${cursor}`}>
+              {props.text.slice(cursor, matchIndex)}
+            </span>,
+          );
+        }
+        inlineNodes.push(
+          <UserMessageTerminalContextInlineLabel
+            key={`user-terminal-context-inline:${context.header}`}
+            context={context}
+          />,
+        );
+        cursor = matchIndex + label.length;
+      }
+
+      if (inlineNodes.length > 0) {
+        if (cursor < props.text.length) {
+          inlineNodes.push(
+            <span key={`user-message-terminal-context-inline-rest:${cursor}`}>
+              {props.text.slice(cursor)}
+            </span>,
+          );
+        }
+
+        return (
+          <div className="wrap-break-word whitespace-pre-wrap font-mono text-sm leading-relaxed text-foreground">
+            {inlineNodes}
+          </div>
+        );
+      }
+    }
 
     for (const context of props.terminalContexts) {
       inlineNodes.push(

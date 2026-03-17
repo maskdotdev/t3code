@@ -9,9 +9,14 @@ import {
   deriveDisplayedUserMessageState,
   ensureInlineTerminalContextPlaceholders,
   extractTrailingTerminalContexts,
+  filterTerminalContextsWithText,
+  formatInlineTerminalContextLabel,
   formatTerminalContextLabel,
+  hasTerminalContextText,
   INLINE_TERMINAL_CONTEXT_PLACEHOLDER,
   insertInlineTerminalContextPlaceholder,
+  isTerminalContextExpired,
+  materializeInlineTerminalContextPrompt,
   removeInlineTerminalContextPlaceholder,
   stripInlineTerminalContextPlaceholders,
   type TerminalContextDraft,
@@ -60,6 +65,25 @@ describe("terminalContext", () => {
     expect(appendTerminalContextsToPrompt("Investigate this", [makeContext()])).toBe(
       [
         "Investigate this",
+        "",
+        "<terminal_context>",
+        "- Terminal 1 lines 12-13:",
+        "  12 | git status",
+        "  13 | On branch main",
+        "</terminal_context>",
+      ].join("\n"),
+    );
+  });
+
+  it("replaces inline placeholders with inline terminal labels before appending context blocks", () => {
+    expect(
+      appendTerminalContextsToPrompt(
+        `Investigate ${INLINE_TERMINAL_CONTEXT_PLACEHOLDER} carefully`,
+        [makeContext()],
+      ),
+    ).toBe(
+      [
+        "Investigate @terminal-1:12-13 carefully",
         "",
         "<terminal_context>",
         "- Terminal 1 lines 12-13:",
@@ -158,5 +182,29 @@ describe("terminalContext", () => {
       cursor: 5,
       contextIndex: 0,
     });
+  });
+
+  it("marks contexts without snapshot text as expired and filters them from sendable contexts", () => {
+    const liveContext = makeContext();
+    const expiredContext = makeContext({
+      id: "context-2",
+      text: "",
+    });
+
+    expect(hasTerminalContextText(liveContext)).toBe(true);
+    expect(isTerminalContextExpired(liveContext)).toBe(false);
+    expect(hasTerminalContextText(expiredContext)).toBe(false);
+    expect(isTerminalContextExpired(expiredContext)).toBe(true);
+    expect(filterTerminalContextsWithText([expiredContext, liveContext])).toEqual([liveContext]);
+  });
+
+  it("formats and materializes inline terminal labels from placeholder positions", () => {
+    expect(formatInlineTerminalContextLabel(makeContext())).toBe("@terminal-1:12-13");
+    expect(
+      materializeInlineTerminalContextPrompt(
+        `Investigate ${INLINE_TERMINAL_CONTEXT_PLACEHOLDER} carefully`,
+        [makeContext()],
+      ),
+    ).toBe("Investigate @terminal-1:12-13 carefully");
   });
 });

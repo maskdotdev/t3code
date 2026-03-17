@@ -13,7 +13,7 @@ import { DEFAULT_INTERACTION_MODE, DEFAULT_RUNTIME_MODE, type ChatImageAttachmen
 import {
   type TerminalContextDraft,
   ensureInlineTerminalContextPlaceholders,
-  normalizeTerminalContextSelection,
+  normalizeTerminalContextText,
 } from "./lib/terminalContext";
 import { Debouncer } from "@tanstack/react-pacer";
 import { create } from "zustand";
@@ -76,10 +76,20 @@ export interface ComposerImageAttachment extends Omit<ChatImageAttachment, "prev
   file: File;
 }
 
+interface PersistedTerminalContextDraft {
+  id: string;
+  threadId: ThreadId;
+  createdAt: string;
+  terminalId: string;
+  terminalLabel: string;
+  lineStart: number;
+  lineEnd: number;
+}
+
 interface PersistedComposerThreadDraftState {
   prompt: string;
   attachments: PersistedComposerImageAttachment[];
-  terminalContexts?: TerminalContextDraft[];
+  terminalContexts?: PersistedTerminalContextDraft[];
   provider?: ProviderKind | null;
   model?: string | null;
   runtimeMode?: RuntimeMode | null;
@@ -254,21 +264,28 @@ function composerImageDedupKey(image: ComposerImageAttachment): string {
 }
 
 function terminalContextDedupKey(context: TerminalContextDraft): string {
-  return `${context.terminalId}\u0000${context.lineStart}\u0000${context.lineEnd}\u0000${context.text}`;
+  return `${context.terminalId}\u0000${context.lineStart}\u0000${context.lineEnd}`;
 }
 
 function normalizeTerminalContextForThread(
   threadId: ThreadId,
   context: TerminalContextDraft,
 ): TerminalContextDraft | null {
-  const normalizedSelection = normalizeTerminalContextSelection(context);
-  if (!normalizedSelection) {
+  const terminalId = context.terminalId.trim();
+  const terminalLabel = context.terminalLabel.trim();
+  if (terminalId.length === 0 || terminalLabel.length === 0) {
     return null;
   }
+  const lineStart = Math.max(1, Math.floor(context.lineStart));
+  const lineEnd = Math.max(lineStart, Math.floor(context.lineEnd));
   return {
     ...context,
     threadId,
-    ...normalizedSelection,
+    terminalId,
+    terminalLabel,
+    lineStart,
+    lineEnd,
+    text: normalizeTerminalContextText(context.text),
   };
 }
 
@@ -357,7 +374,9 @@ function normalizePersistedAttachment(value: unknown): PersistedComposerImageAtt
   };
 }
 
-function normalizeTerminalContextDraft(value: unknown): TerminalContextDraft | null {
+function normalizePersistedTerminalContextDraft(
+  value: unknown,
+): PersistedTerminalContextDraft | null {
   if (!value || typeof value !== "object") {
     return null;
   }
@@ -381,21 +400,22 @@ function normalizeTerminalContextDraft(value: unknown): TerminalContextDraft | n
   ) {
     return null;
   }
-  const normalizedSelection = normalizeTerminalContextSelection({
-    terminalId: typeof candidate.terminalId === "string" ? candidate.terminalId : "",
-    terminalLabel: typeof candidate.terminalLabel === "string" ? candidate.terminalLabel : "",
-    lineStart,
-    lineEnd,
-    text: typeof candidate.text === "string" ? candidate.text : "",
-  });
-  if (!normalizedSelection) {
+  const terminalId = typeof candidate.terminalId === "string" ? candidate.terminalId.trim() : "";
+  const terminalLabel =
+    typeof candidate.terminalLabel === "string" ? candidate.terminalLabel.trim() : "";
+  if (terminalId.length === 0 || terminalLabel.length === 0) {
     return null;
   }
+  const normalizedLineStart = Math.max(1, Math.floor(lineStart));
+  const normalizedLineEnd = Math.max(normalizedLineStart, Math.floor(lineEnd));
   return {
     id,
     threadId: threadId as ThreadId,
     createdAt,
-    ...normalizedSelection,
+    terminalId,
+    terminalLabel,
+    lineStart: normalizedLineStart,
+    lineEnd: normalizedLineEnd,
   };
 }
 
@@ -515,7 +535,7 @@ function normalizePersistedComposerDraftState(value: unknown): PersistedComposer
       : [];
     const terminalContexts = Array.isArray(draftCandidate.terminalContexts)
       ? draftCandidate.terminalContexts.flatMap((entry) => {
-          const normalized = normalizeTerminalContextDraft(entry);
+          const normalized = normalizePersistedTerminalContextDraft(entry);
           return normalized ? [normalized] : [];
         })
       : [];
@@ -669,7 +689,11 @@ function toHydratedThreadDraft(
     images: hydrateImagesFromPersisted(persistedDraft.attachments),
     nonPersistedImageIds: [],
     persistedAttachments: persistedDraft.attachments,
-    terminalContexts: persistedDraft.terminalContexts ?? [],
+    terminalContexts:
+      persistedDraft.terminalContexts?.map((context) => ({
+        ...context,
+        text: "",
+      })) ?? [],
     provider: persistedDraft.provider ?? null,
     model: persistedDraft.model ?? null,
     runtimeMode: persistedDraft.runtimeMode ?? null,
@@ -1498,7 +1522,15 @@ export const useComposerDraftStore = create<ComposerDraftStoreState>()(
             attachments: draft.persistedAttachments,
           };
           if (draft.terminalContexts.length > 0) {
-            persistedDraft.terminalContexts = draft.terminalContexts;
+            persistedDraft.terminalContexts = draft.terminalContexts.map((context) => ({
+              id: context.id,
+              threadId: context.threadId,
+              createdAt: context.createdAt,
+              terminalId: context.terminalId,
+              terminalLabel: context.terminalLabel,
+              lineStart: context.lineStart,
+              lineEnd: context.lineEnd,
+            }));
           }
           if (draft.model) {
             persistedDraft.model = draft.model;

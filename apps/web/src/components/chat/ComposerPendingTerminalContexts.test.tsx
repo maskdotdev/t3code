@@ -4,24 +4,25 @@ import { describe, expect, it } from "vitest";
 
 import { ComposerPendingTerminalContextChip } from "./ComposerPendingTerminalContexts";
 
-const context = {
-  id: "context-1",
-  threadId: ThreadId.makeUnsafe("thread-1"),
-  terminalId: "terminal-1",
-  terminalLabel: "Terminal 1",
-  lineStart: 1,
-  lineEnd: 5,
-  text: "echo test",
-  createdAt: "2026-03-17T10:00:00.000Z",
-} as const;
-
 describe("ComposerPendingTerminalContextChip", () => {
-  it("renders using the inline composer chip styling", () => {
-    const html = renderToStaticMarkup(<ComposerPendingTerminalContextChip context={context} />);
+  it("renders expired terminal contexts with error styling", () => {
+    const markup = renderToStaticMarkup(
+      <ComposerPendingTerminalContextChip
+        context={{
+          id: "ctx-expired",
+          threadId: ThreadId.makeUnsafe("thread-1"),
+          terminalId: "default",
+          terminalLabel: "Terminal 1",
+          lineStart: 2,
+          lineEnd: 4,
+          text: "",
+          createdAt: "2026-03-17T18:42:05.449Z",
+        }}
+      />,
+    );
 
-    expect(html).toContain("rounded-md");
-    expect(html).not.toContain("rounded-full");
-    expect(html).toContain("Terminal 1 lines 1-5");
-    expect(html).not.toContain("aria-label=");
+    expect(markup).toContain('data-terminal-context-expired="true"');
+    expect(markup).toContain("border-destructive/35");
+    expect(markup).toContain("Terminal 1 lines 2-4");
   });
 });

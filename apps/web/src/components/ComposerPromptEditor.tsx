@@ -64,7 +64,7 @@ import {
   type TerminalContextDraft,
 } from "~/lib/terminalContext";
 import { cn } from "~/lib/utils";
-import { basenameOfPath, getVscodeIconUrlForEntry } from "~/vscode-icons";
+import { basenameOfPath, getVscodeIconUrlForEntry, inferEntryKindFromPath } from "~/vscode-icons";
 import {
   COMPOSER_INLINE_CHIP_CLASS_NAME,
   COMPOSER_INLINE_CHIP_ICON_CLASS_NAME,
@@ -242,17 +242,6 @@ function isComposerInlineTokenNode(candidate: unknown): candidate is ComposerInl
   );
 }
 
-function inferMentionPathKind(pathValue: string): "file" | "directory" {
-  const base = basenameOfPath(pathValue);
-  if (base.startsWith(".") && !base.slice(1).includes(".")) {
-    return "directory";
-  }
-  if (base.includes(".")) {
-    return "file";
-  }
-  return "directory";
-}
-
 function resolvedThemeFromDocument(): "light" | "dark" {
   return document.documentElement.classList.contains("dark") ? "dark" : "light";
 }
@@ -268,7 +257,7 @@ function renderMentionChipDom(container: HTMLElement, pathValue: string): void {
   icon.ariaHidden = "true";
   icon.className = COMPOSER_INLINE_CHIP_ICON_CLASS_NAME;
   icon.loading = "lazy";
-  icon.src = getVscodeIconUrlForEntry(pathValue, inferMentionPathKind(pathValue), theme);
+  icon.src = getVscodeIconUrlForEntry(pathValue, inferEntryKindFromPath(pathValue), theme);
 
   const label = document.createElement("span");
   label.className = COMPOSER_INLINE_CHIP_LABEL_CLASS_NAME;

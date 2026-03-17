@@ -248,6 +248,81 @@ describe("composerDraftStore terminal contexts", () => {
     );
     expect(draft?.terminalContexts.map((context) => context.id)).toEqual(["ctx-2", "ctx-1"]);
   });
+
+  it("omits terminal context text from persisted drafts", () => {
+    useComposerDraftStore
+      .getState()
+      .addTerminalContext(threadId, makeTerminalContext({ id: "ctx-persist" }));
+
+    const persistApi = useComposerDraftStore.persist as unknown as {
+      getOptions: () => {
+        partialize: (state: ReturnType<typeof useComposerDraftStore.getState>) => unknown;
+      };
+    };
+    const persistedState = persistApi.getOptions().partialize(useComposerDraftStore.getState()) as {
+      draftsByThreadId?: Record<string, { terminalContexts?: Array<Record<string, unknown>> }>;
+    };
+
+    expect(
+      persistedState.draftsByThreadId?.[threadId]?.terminalContexts?.[0],
+      "Expected terminal context metadata to be persisted.",
+    ).toMatchObject({
+      id: "ctx-persist",
+      terminalId: "default",
+      terminalLabel: "Terminal 1",
+      lineStart: 4,
+      lineEnd: 5,
+    });
+    expect(
+      persistedState.draftsByThreadId?.[threadId]?.terminalContexts?.[0]?.text,
+    ).toBeUndefined();
+  });
+
+  it("hydrates persisted terminal contexts without in-memory snapshot text", () => {
+    const persistApi = useComposerDraftStore.persist as unknown as {
+      getOptions: () => {
+        merge: (
+          persistedState: unknown,
+          currentState: ReturnType<typeof useComposerDraftStore.getState>,
+        ) => ReturnType<typeof useComposerDraftStore.getState>;
+      };
+    };
+    const mergedState = persistApi.getOptions().merge(
+      {
+        draftsByThreadId: {
+          [threadId]: {
+            prompt: INLINE_TERMINAL_CONTEXT_PLACEHOLDER,
+            attachments: [],
+            terminalContexts: [
+              {
+                id: "ctx-rehydrated",
+                threadId,
+                createdAt: "2026-03-13T12:00:00.000Z",
+                terminalId: "default",
+                terminalLabel: "Terminal 1",
+                lineStart: 4,
+                lineEnd: 5,
+              },
+            ],
+          },
+        },
+        draftThreadsByThreadId: {},
+        projectDraftThreadIdByProjectId: {},
+      },
+      useComposerDraftStore.getInitialState(),
+    );
+
+    expect(mergedState.draftsByThreadId[threadId]?.terminalContexts).toMatchObject([
+      {
+        id: "ctx-rehydrated",
+        terminalId: "default",
+        terminalLabel: "Terminal 1",
+        lineStart: 4,
+        lineEnd: 5,
+        text: "",
+      },
+    ]);
+  });
 });
 
 describe("composerDraftStore project draft thread mapping", () => {
