@@ -5,9 +5,15 @@ import {
   appendTerminalContextsToPrompt,
   buildTerminalContextPreviewTitle,
   buildTerminalContextBlock,
+  countInlineTerminalContextPlaceholders,
   deriveDisplayedUserMessageState,
+  ensureInlineTerminalContextPlaceholders,
   extractTrailingTerminalContexts,
   formatTerminalContextLabel,
+  INLINE_TERMINAL_CONTEXT_PLACEHOLDER,
+  insertInlineTerminalContextPlaceholder,
+  removeInlineTerminalContextPlaceholder,
+  stripInlineTerminalContextPlaceholders,
   type TerminalContextDraft,
 } from "./terminalContext";
 
@@ -116,5 +122,41 @@ describe("terminalContext", () => {
         }),
       ]),
     ).toBeNull();
+  });
+
+  it("tracks inline terminal context placeholders in prompt text", () => {
+    const placeholder = INLINE_TERMINAL_CONTEXT_PLACEHOLDER;
+    expect(countInlineTerminalContextPlaceholders(`a${placeholder}b${placeholder}`)).toBe(2);
+    expect(ensureInlineTerminalContextPlaceholders("Investigate this", 2)).toBe(
+      `${placeholder}${placeholder}Investigate this`,
+    );
+    expect(insertInlineTerminalContextPlaceholder("abc", 1)).toEqual({
+      prompt: `a ${placeholder} bc`,
+      cursor: 4,
+      contextIndex: 0,
+    });
+    expect(removeInlineTerminalContextPlaceholder(`a${placeholder}b${placeholder}c`, 1)).toEqual({
+      prompt: `a${placeholder}bc`,
+      cursor: 3,
+    });
+    expect(stripInlineTerminalContextPlaceholders(`a${placeholder}b`)).toBe("ab");
+  });
+
+  it("inserts a placeholder after a file mention when given the expanded prompt cursor", () => {
+    const placeholder = INLINE_TERMINAL_CONTEXT_PLACEHOLDER;
+    expect(insertInlineTerminalContextPlaceholder("Inspect @package.json ", 22)).toEqual({
+      prompt: `Inspect @package.json ${placeholder} `,
+      cursor: 24,
+      contextIndex: 0,
+    });
+  });
+
+  it("adds a trailing space and consumes an existing trailing space at the insertion point", () => {
+    const placeholder = INLINE_TERMINAL_CONTEXT_PLACEHOLDER;
+    expect(insertInlineTerminalContextPlaceholder("yo whats", 3)).toEqual({
+      prompt: `yo ${placeholder} whats`,
+      cursor: 5,
+      contextIndex: 0,
+    });
   });
 });

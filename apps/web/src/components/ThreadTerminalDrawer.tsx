@@ -12,7 +12,6 @@ import {
   useState,
 } from "react";
 import { Popover, PopoverPopup, PopoverTrigger } from "~/components/ui/popover";
-import { Button } from "~/components/ui/button";
 import { type TerminalContextSelection } from "~/lib/terminalContext";
 import { openInPreferredEditor } from "../editorPreferences";
 import {
@@ -31,6 +30,7 @@ import { readNativeApi } from "~/nativeApi";
 
 const MIN_DRAWER_HEIGHT = 180;
 const MAX_DRAWER_HEIGHT_RATIO = 0.75;
+const MULTI_CLICK_SELECTION_ACTION_DELAY_MS = 260;
 
 function maxDrawerHeight(): number {
   if (typeof window === "undefined") return DEFAULT_THREAD_TERMINAL_HEIGHT;
@@ -109,8 +109,64 @@ function terminalThemeFromApp(): ITheme {
   };
 }
 
-function isTerminalSelectionActionTarget(target: EventTarget | null): boolean {
-  return target instanceof Element && target.closest("[data-terminal-selection-action]") !== null;
+function getTerminalSelectionRect(mountElement: HTMLElement): DOMRect | null {
+  const selection = window.getSelection();
+  if (!selection || selection.rangeCount === 0 || selection.isCollapsed) {
+    return null;
+  }
+
+  const range = selection.getRangeAt(0);
+  const commonAncestor = range.commonAncestorContainer;
+  const selectionRoot =
+    commonAncestor instanceof Element ? commonAncestor : commonAncestor.parentElement;
+  if (!(selectionRoot instanceof Element) || !mountElement.contains(selectionRoot)) {
+    return null;
+  }
+
+  const rects = Array.from(range.getClientRects()).filter(
+    (rect) => rect.width > 0 || rect.height > 0,
+  );
+  if (rects.length > 0) {
+    return rects[rects.length - 1] ?? null;
+  }
+
+  const boundingRect = range.getBoundingClientRect();
+  return boundingRect.width > 0 || boundingRect.height > 0 ? boundingRect : null;
+}
+
+export function resolveTerminalSelectionActionPosition(options: {
+  bounds: { left: number; top: number; width: number; height: number };
+  selectionRect: { right: number; bottom: number } | null;
+  pointer: { x: number; y: number } | null;
+  viewport?: { width: number; height: number } | null;
+}): { x: number; y: number } {
+  const { bounds, selectionRect, pointer, viewport } = options;
+  const viewportWidth =
+    viewport?.width ??
+    (typeof window === "undefined" ? bounds.left + bounds.width + 8 : window.innerWidth);
+  const viewportHeight =
+    viewport?.height ??
+    (typeof window === "undefined" ? bounds.top + bounds.height + 8 : window.innerHeight);
+  const preferredX =
+    selectionRect !== null
+      ? Math.round(selectionRect.right)
+      : pointer === null
+        ? Math.round(bounds.left + bounds.width - 140)
+        : Math.round(pointer.x);
+  const preferredY =
+    selectionRect !== null
+      ? Math.round(selectionRect.bottom + 4)
+      : pointer === null
+        ? Math.round(bounds.top + 12)
+        : Math.round(pointer.y);
+  return {
+    x: Math.max(8, Math.min(preferredX, Math.max(viewportWidth - 8, 8))),
+    y: Math.max(8, Math.min(preferredY, Math.max(viewportHeight - 8, 8))),
+  };
+}
+
+export function terminalSelectionActionDelayForClickCount(clickCount: number): number {
+  return clickCount >= 2 ? MULTI_CLICK_SELECTION_ACTION_DELAY_MS : 0;
 }
 
 interface TerminalViewportProps {
@@ -144,32 +200,24 @@ function TerminalViewport({
   const terminalRef = useRef<Terminal | null>(null);
   const fitAddonRef = useRef<FitAddon | null>(null);
   const onSessionExitedRef = useRef(onSessionExited);
+  const onAddTerminalContextRef = useRef(onAddTerminalContext);
   const terminalLabelRef = useRef(terminalLabel);
   const hasHandledExitRef = useRef(false);
   const selectionPointerRef = useRef<{ x: number; y: number } | null>(null);
-  const [selectionAction, setSelectionAction] = useState<{
-    left: number;
-    top: number;
-    selection: TerminalContextSelection;
-  } | null>(null);
+  const selectionActionRequestIdRef = useRef(0);
+  const selectionActionOpenRef = useRef(false);
+  const selectionActionTimerRef = useRef<number | null>(null);
 
   useEffect(() => {
     onSessionExitedRef.current = onSessionExited;
   }, [onSessionExited]);
 
   useEffect(() => {
+    onAddTerminalContextRef.current = onAddTerminalContext;
+  }, [onAddTerminalContext]);
+
+  useEffect(() => {
     terminalLabelRef.current = terminalLabel;
-    setSelectionAction((current) =>
-      current === null
-        ? null
-        : {
-            ...current,
-            selection: {
-              ...current.selection,
-              terminalLabel,
-            },
-          },
-    );
   }, [terminalLabel]);
 
   useEffect(() => {
@@ -198,34 +246,43 @@ function TerminalViewport({
     if (!api) return;
 
     const clearSelectionAction = () => {
-      setSelectionAction(null);
+      selectionActionRequestIdRef.current += 1;
+      if (selectionActionTimerRef.current !== null) {
+        window.clearTimeout(selectionActionTimerRef.current);
+        selectionActionTimerRef.current = null;
+      }
     };
 
-    const updateSelectionAction = () => {
+    const readSelectionAction = (): {
+      position: { x: number; y: number };
+      selection: TerminalContextSelection;
+    } | null => {
       const activeTerminal = terminalRef.current;
       const mountElement = containerRef.current;
       if (!activeTerminal || !mountElement || !activeTerminal.hasSelection()) {
-        clearSelectionAction();
-        return;
+        return null;
       }
       const selectionText = activeTerminal.getSelection();
       const selectionPosition = activeTerminal.getSelectionPosition();
       const normalizedText = selectionText.replace(/\r\n/g, "\n").replace(/^\n+|\n+$/g, "");
       if (!selectionPosition || normalizedText.length === 0) {
-        clearSelectionAction();
-        return;
+        return null;
       }
       const lineStart = selectionPosition.start.y + 1;
       const lineCount = normalizedText.split("\n").length;
       const lineEnd = Math.max(lineStart, lineStart + lineCount - 1);
       const bounds = mountElement.getBoundingClientRect();
-      const pointer = selectionPointerRef.current;
-      const preferredLeft =
-        pointer === null ? bounds.width - 116 : Math.round(pointer.x - bounds.left);
-      const preferredTop = pointer === null ? 12 : Math.round(pointer.y - bounds.top - 40);
-      setSelectionAction({
-        left: Math.max(8, Math.min(preferredLeft, Math.max(bounds.width - 116, 8))),
-        top: Math.max(8, Math.min(preferredTop, Math.max(bounds.height - 36, 8))),
+      const selectionRect = getTerminalSelectionRect(mountElement);
+      const position = resolveTerminalSelectionActionPosition({
+        bounds,
+        selectionRect:
+          selectionRect === null
+            ? null
+            : { right: selectionRect.right, bottom: selectionRect.bottom },
+        pointer: selectionPointerRef.current,
+      });
+      return {
+        position,
         selection: {
           terminalId,
           terminalLabel: terminalLabelRef.current,
@@ -233,7 +290,34 @@ function TerminalViewport({
           lineEnd,
           text: normalizedText,
         },
-      });
+      };
+    };
+
+    const showSelectionAction = async () => {
+      if (selectionActionOpenRef.current) {
+        return;
+      }
+      const nextAction = readSelectionAction();
+      if (!nextAction) {
+        clearSelectionAction();
+        return;
+      }
+      const requestId = ++selectionActionRequestIdRef.current;
+      selectionActionOpenRef.current = true;
+      try {
+        const clicked = await api.contextMenu.show(
+          [{ id: "add-to-chat", label: "Add to chat" }],
+          nextAction.position,
+        );
+        if (requestId !== selectionActionRequestIdRef.current || clicked !== "add-to-chat") {
+          return;
+        }
+        onAddTerminalContextRef.current(nextAction.selection);
+        terminalRef.current?.clearSelection();
+        terminalRef.current?.focus();
+      } finally {
+        selectionActionOpenRef.current = false;
+      }
     };
 
     const sendTerminalInput = async (data: string, fallbackError: string) => {
@@ -331,20 +415,26 @@ function TerminalViewport({
     });
 
     const selectionDisposable = terminal.onSelectionChange(() => {
-      window.requestAnimationFrame(updateSelectionAction);
+      if (terminalRef.current?.hasSelection()) {
+        return;
+      }
+      clearSelectionAction();
     });
 
     const handleMouseUp = (event: MouseEvent) => {
-      if (isTerminalSelectionActionTarget(event.target)) {
+      if (event.button !== 0) {
         return;
       }
       selectionPointerRef.current = { x: event.clientX, y: event.clientY };
-      window.requestAnimationFrame(updateSelectionAction);
+      const delay = terminalSelectionActionDelayForClickCount(event.detail);
+      selectionActionTimerRef.current = window.setTimeout(() => {
+        selectionActionTimerRef.current = null;
+        window.requestAnimationFrame(() => {
+          void showSelectionAction();
+        });
+      }, delay);
     };
-    const handlePointerDown = (event: PointerEvent) => {
-      if (isTerminalSelectionActionTarget(event.target)) {
-        return;
-      }
+    const handlePointerDown = (_event: PointerEvent) => {
       clearSelectionAction();
     };
     mount.addEventListener("mouseup", handleMouseUp);
@@ -479,6 +569,9 @@ function TerminalViewport({
       inputDisposable.dispose();
       selectionDisposable.dispose();
       terminalLinksDisposable.dispose();
+      if (selectionActionTimerRef.current !== null) {
+        window.clearTimeout(selectionActionTimerRef.current);
+      }
       mount.removeEventListener("mouseup", handleMouseUp);
       mount.removeEventListener("pointerdown", handlePointerDown);
       themeObserver.disconnect();
@@ -528,41 +621,7 @@ function TerminalViewport({
     };
   }, [drawerHeight, resizeEpoch, terminalId, threadId]);
   return (
-    <div ref={containerRef} className="relative h-full w-full overflow-hidden rounded-[4px]">
-      {selectionAction ? (
-        <div
-          data-terminal-selection-action
-          className="absolute z-20"
-          style={{ left: `${selectionAction.left}px`, top: `${selectionAction.top}px` }}
-        >
-          <div className="rounded-full border border-border/80 bg-background/95 p-1 shadow-lg backdrop-blur">
-            <Button
-              type="button"
-              size="xs"
-              variant="secondary"
-              className="rounded-full px-3"
-              data-terminal-selection-action
-              onMouseDown={(event) => {
-                event.preventDefault();
-                event.stopPropagation();
-              }}
-              onPointerDown={(event) => {
-                event.preventDefault();
-                event.stopPropagation();
-              }}
-              onClick={() => {
-                onAddTerminalContext(selectionAction.selection);
-                terminalRef.current?.clearSelection();
-                setSelectionAction(null);
-                terminalRef.current?.focus();
-              }}
-            >
-              Add to chat
-            </Button>
-          </div>
-        </div>
-      ) : null}
-    </div>
+    <div ref={containerRef} className="relative h-full w-full overflow-hidden rounded-[4px]" />
   );
 }
 

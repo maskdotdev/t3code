@@ -6,7 +6,11 @@ import {
   createDebouncedStorage,
   useComposerDraftStore,
 } from "./composerDraftStore";
-import { type TerminalContextDraft } from "./lib/terminalContext";
+import {
+  INLINE_TERMINAL_CONTEXT_PLACEHOLDER,
+  insertInlineTerminalContextPlaceholder,
+  type TerminalContextDraft,
+} from "./lib/terminalContext";
 
 function makeImage(input: {
   id: string;
@@ -208,6 +212,41 @@ describe("composerDraftStore terminal contexts", () => {
     useComposerDraftStore.getState().clearComposerContent(threadId);
 
     expect(useComposerDraftStore.getState().draftsByThreadId[threadId]).toBeUndefined();
+  });
+
+  it("inserts terminal contexts at the requested inline prompt position", () => {
+    const firstInsertion = insertInlineTerminalContextPlaceholder("alpha beta", 6);
+    const secondInsertion = insertInlineTerminalContextPlaceholder(firstInsertion.prompt, 0);
+
+    expect(
+      useComposerDraftStore
+        .getState()
+        .insertTerminalContext(
+          threadId,
+          firstInsertion.prompt,
+          makeTerminalContext({ id: "ctx-1" }),
+          firstInsertion.contextIndex,
+        ),
+    ).toBe(true);
+    expect(
+      useComposerDraftStore.getState().insertTerminalContext(
+        threadId,
+        secondInsertion.prompt,
+        makeTerminalContext({
+          id: "ctx-2",
+          terminalLabel: "Terminal 2",
+          lineStart: 9,
+          lineEnd: 10,
+        }),
+        secondInsertion.contextIndex,
+      ),
+    ).toBe(true);
+
+    const draft = useComposerDraftStore.getState().draftsByThreadId[threadId];
+    expect(draft?.prompt).toBe(
+      `${INLINE_TERMINAL_CONTEXT_PLACEHOLDER} alpha ${INLINE_TERMINAL_CONTEXT_PLACEHOLDER} beta`,
+    );
+    expect(draft?.terminalContexts.map((context) => context.id)).toEqual(["ctx-2", "ctx-1"]);
   });
 });
 
