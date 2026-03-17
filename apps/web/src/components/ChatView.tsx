@@ -129,11 +129,9 @@ import {
 } from "../composerDraftStore";
 import {
   appendTerminalContextsToPrompt,
-  filterTerminalContextsWithText,
   formatTerminalContextLabel,
   insertInlineTerminalContextPlaceholder,
   removeInlineTerminalContextPlaceholder,
-  stripInlineTerminalContextPlaceholders,
   type TerminalContextDraft,
   type TerminalContextSelection,
 } from "../lib/terminalContext";
@@ -155,10 +153,12 @@ import { ComposerPlanFollowUpBanner } from "./chat/ComposerPlanFollowUpBanner";
 import { ProviderHealthBanner } from "./chat/ProviderHealthBanner";
 import { ThreadErrorBanner } from "./chat/ThreadErrorBanner";
 import {
+  buildExpiredTerminalContextToastCopy,
   buildLocalDraftThread,
   buildTemporaryWorktreeBranchName,
   cloneComposerImageForRetry,
   collectUserMessageBlobPreviewUrls,
+  deriveComposerSendState,
   getCustomModelOptionsByProvider,
   LAST_INVOKED_SCRIPT_BY_PROJECT_KEY,
   LastInvokedScriptByProjectSchema,
@@ -237,6 +237,15 @@ export default function ChatView({ threadId }: ChatViewProps) {
   const prompt = composerDraft.prompt;
   const composerImages = composerDraft.images;
   const composerTerminalContexts = composerDraft.terminalContexts;
+  const composerSendState = useMemo(
+    () =>
+      deriveComposerSendState({
+        prompt,
+        imageCount: composerImages.length,
+        terminalContexts: composerTerminalContexts,
+      }),
+    [composerImages.length, composerTerminalContexts, prompt],
+  );
   const nonPersistedComposerImageIds = composerDraft.nonPersistedImageIds;
   const setComposerDraftPrompt = useComposerDraftStore((store) => store.setPrompt);
   const setComposerDraftProvider = useComposerDraftStore((store) => store.setProvider);
@@ -2320,9 +2329,16 @@ export default function ChatView({ threadId }: ChatViewProps) {
       return;
     }
     const promptForSend = promptRef.current;
-    const trimmed = stripInlineTerminalContextPlaceholders(promptForSend).trim();
-    const sendableComposerTerminalContexts =
-      filterTerminalContextsWithText(composerTerminalContexts);
+    const {
+      trimmedPrompt: trimmed,
+      sendableTerminalContexts: sendableComposerTerminalContexts,
+      expiredTerminalContextCount,
+      hasSendableContent,
+    } = deriveComposerSendState({
+      prompt: promptForSend,
+      imageCount: composerImages.length,
+      terminalContexts: composerTerminalContexts,
+    });
     if (showPlanFollowUpPrompt && activeProposedPlan) {
       const followUp = resolvePlanFollowUpSubmission({
         draftText: trimmed,
@@ -2352,7 +2368,18 @@ export default function ChatView({ threadId }: ChatViewProps) {
       setComposerTrigger(null);
       return;
     }
-    if (!trimmed && composerImages.length === 0 && sendableComposerTerminalContexts.length === 0) {
+    if (!hasSendableContent) {
+      if (expiredTerminalContextCount > 0) {
+        const toastCopy = buildExpiredTerminalContextToastCopy(
+          expiredTerminalContextCount,
+          "empty",
+        );
+        toastManager.add({
+          type: "warning",
+          title: toastCopy.title,
+          description: toastCopy.description,
+        });
+      }
       return;
     }
     if (!activeProject) return;
@@ -2419,6 +2446,17 @@ export default function ChatView({ threadId }: ChatViewProps) {
     forceStickToBottom();
 
     setThreadError(threadIdForSend, null);
+    if (expiredTerminalContextCount > 0) {
+      const toastCopy = buildExpiredTerminalContextToastCopy(
+        expiredTerminalContextCount,
+        "omitted",
+      );
+      toastManager.add({
+        type: "warning",
+        title: toastCopy.title,
+        description: toastCopy.description,
+      });
+    }
     promptRef.current = "";
     clearComposerDraftContent(threadIdForSend);
     setComposerHighlightedItemId(null);
@@ -3891,11 +3929,7 @@ export default function ChatView({ threadId }: ChatViewProps) {
                             type="submit"
                             className="flex h-9 w-9 items-center justify-center rounded-full bg-primary/90 text-primary-foreground transition-all duration-150 hover:bg-primary hover:scale-105 disabled:opacity-30 disabled:hover:scale-100 sm:h-8 sm:w-8"
                             disabled={
-                              isSendBusy ||
-                              isConnecting ||
-                              (!prompt.trim() &&
-                                composerImages.length === 0 &&
-                                composerTerminalContexts.length === 0)
+                              isSendBusy || isConnecting || !composerSendState.hasSendableContent
                             }
                             aria-label={
                               isConnecting

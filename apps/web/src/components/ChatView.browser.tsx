@@ -21,7 +21,10 @@ import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } 
 import { render } from "vitest-browser-react";
 
 import { useComposerDraftStore } from "../composerDraftStore";
-import { type TerminalContextDraft } from "../lib/terminalContext";
+import {
+  INLINE_TERMINAL_CONTEXT_PLACEHOLDER,
+  type TerminalContextDraft,
+} from "../lib/terminalContext";
 import { isMacPlatform } from "../lib/utils";
 import { getRouter } from "../router";
 import { useStore } from "../store";
@@ -548,6 +551,13 @@ async function waitForComposerEditor(): Promise<HTMLElement> {
   return waitForElement(
     () => document.querySelector<HTMLElement>('[contenteditable="true"]'),
     "Unable to find composer editor.",
+  );
+}
+
+async function waitForSendButton(): Promise<HTMLButtonElement> {
+  return waitForElement(
+    () => document.querySelector<HTMLButtonElement>('button[aria-label="Send message"]'),
+    "Unable to find send button.",
   );
 }
 
@@ -1096,6 +1106,93 @@ describe("ChatView timeline estimator parity (full app)", () => {
           expect(draft?.terminalContexts.map((context) => context.id)).toEqual(["ctx-added"]);
           expect(document.body.textContent).toContain(addedLabel);
           expect(document.body.textContent).not.toContain(removedLabel);
+        },
+        { timeout: 8_000, interval: 16 },
+      );
+    } finally {
+      await mounted.cleanup();
+    }
+  });
+
+  it("disables send when the composer only contains an expired terminal pill", async () => {
+    const expiredLabel = "Terminal 1 line 4";
+    useComposerDraftStore.getState().addTerminalContext(
+      THREAD_ID,
+      createTerminalContext({
+        id: "ctx-expired-only",
+        terminalLabel: "Terminal 1",
+        lineStart: 4,
+        lineEnd: 4,
+        text: "",
+      }),
+    );
+
+    const mounted = await mountChatView({
+      viewport: DEFAULT_VIEWPORT,
+      snapshot: createSnapshotForTargetUser({
+        targetMessageId: "msg-user-expired-pill-disabled" as MessageId,
+        targetText: "expired pill disabled target",
+      }),
+    });
+
+    try {
+      await vi.waitFor(
+        () => {
+          expect(document.body.textContent).toContain(expiredLabel);
+        },
+        { timeout: 8_000, interval: 16 },
+      );
+
+      const sendButton = await waitForSendButton();
+      expect(sendButton.disabled).toBe(true);
+    } finally {
+      await mounted.cleanup();
+    }
+  });
+
+  it("warns when sending text while omitting expired terminal pills", async () => {
+    const expiredLabel = "Terminal 1 line 4";
+    useComposerDraftStore.getState().addTerminalContext(
+      THREAD_ID,
+      createTerminalContext({
+        id: "ctx-expired-send-warning",
+        terminalLabel: "Terminal 1",
+        lineStart: 4,
+        lineEnd: 4,
+        text: "",
+      }),
+    );
+    useComposerDraftStore
+      .getState()
+      .setPrompt(THREAD_ID, `yoo${INLINE_TERMINAL_CONTEXT_PLACEHOLDER}waddup`);
+
+    const mounted = await mountChatView({
+      viewport: DEFAULT_VIEWPORT,
+      snapshot: createSnapshotForTargetUser({
+        targetMessageId: "msg-user-expired-pill-warning" as MessageId,
+        targetText: "expired pill warning target",
+      }),
+    });
+
+    try {
+      await vi.waitFor(
+        () => {
+          expect(document.body.textContent).toContain(expiredLabel);
+        },
+        { timeout: 8_000, interval: 16 },
+      );
+
+      const sendButton = await waitForSendButton();
+      expect(sendButton.disabled).toBe(false);
+      sendButton.click();
+
+      await vi.waitFor(
+        () => {
+          expect(document.body.textContent).toContain(
+            "Expired terminal context omitted from message",
+          );
+          expect(document.body.textContent).not.toContain(expiredLabel);
+          expect(document.body.textContent).toContain("yoowaddup");
         },
         { timeout: 8_000, interval: 16 },
       );
