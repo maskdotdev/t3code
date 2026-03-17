@@ -147,18 +147,22 @@ export function resolveTerminalSelectionActionPosition(options: {
   const viewportHeight =
     viewport?.height ??
     (typeof window === "undefined" ? bounds.top + bounds.height + 8 : window.innerHeight);
+  const drawerLeft = Math.round(bounds.left);
+  const drawerTop = Math.round(bounds.top);
+  const drawerRight = Math.round(bounds.left + bounds.width);
+  const drawerBottom = Math.round(bounds.top + bounds.height);
   const preferredX =
     selectionRect !== null
       ? Math.round(selectionRect.right)
       : pointer === null
         ? Math.round(bounds.left + bounds.width - 140)
-        : Math.round(pointer.x);
+        : Math.max(drawerLeft, Math.min(Math.round(pointer.x), drawerRight));
   const preferredY =
     selectionRect !== null
       ? Math.round(selectionRect.bottom + 4)
       : pointer === null
         ? Math.round(bounds.top + 12)
-        : Math.round(pointer.y);
+        : Math.max(drawerTop, Math.min(Math.round(pointer.y), drawerBottom));
   return {
     x: Math.max(8, Math.min(preferredX, Math.max(viewportWidth - 8, 8))),
     y: Math.max(8, Math.min(preferredY, Math.max(viewportHeight - 8, 8))),
@@ -167,6 +171,13 @@ export function resolveTerminalSelectionActionPosition(options: {
 
 export function terminalSelectionActionDelayForClickCount(clickCount: number): number {
   return clickCount >= 2 ? MULTI_CLICK_SELECTION_ACTION_DELAY_MS : 0;
+}
+
+export function shouldHandleTerminalSelectionMouseUp(
+  selectionGestureActive: boolean,
+  button: number,
+): boolean {
+  return selectionGestureActive && button === 0;
 }
 
 interface TerminalViewportProps {
@@ -204,6 +215,7 @@ function TerminalViewport({
   const terminalLabelRef = useRef(terminalLabel);
   const hasHandledExitRef = useRef(false);
   const selectionPointerRef = useRef<{ x: number; y: number } | null>(null);
+  const selectionGestureActiveRef = useRef(false);
   const selectionActionRequestIdRef = useRef(0);
   const selectionActionOpenRef = useRef(false);
   const selectionActionTimerRef = useRef<number | null>(null);
@@ -422,7 +434,12 @@ function TerminalViewport({
     });
 
     const handleMouseUp = (event: MouseEvent) => {
-      if (event.button !== 0) {
+      const shouldHandle = shouldHandleTerminalSelectionMouseUp(
+        selectionGestureActiveRef.current,
+        event.button,
+      );
+      selectionGestureActiveRef.current = false;
+      if (!shouldHandle) {
         return;
       }
       selectionPointerRef.current = { x: event.clientX, y: event.clientY };
@@ -434,10 +451,11 @@ function TerminalViewport({
         });
       }, delay);
     };
-    const handlePointerDown = (_event: PointerEvent) => {
+    const handlePointerDown = (event: PointerEvent) => {
       clearSelectionAction();
+      selectionGestureActiveRef.current = event.button === 0;
     };
-    mount.addEventListener("mouseup", handleMouseUp);
+    window.addEventListener("mouseup", handleMouseUp);
     mount.addEventListener("pointerdown", handlePointerDown);
 
     const themeObserver = new MutationObserver(() => {
@@ -572,7 +590,7 @@ function TerminalViewport({
       if (selectionActionTimerRef.current !== null) {
         window.clearTimeout(selectionActionTimerRef.current);
       }
-      mount.removeEventListener("mouseup", handleMouseUp);
+      window.removeEventListener("mouseup", handleMouseUp);
       mount.removeEventListener("pointerdown", handlePointerDown);
       themeObserver.disconnect();
       terminalRef.current = null;
