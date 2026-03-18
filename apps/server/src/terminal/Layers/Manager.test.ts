@@ -6,6 +6,7 @@ import {
   DEFAULT_TERMINAL_ID,
   type TerminalEvent,
   type TerminalOpenInput,
+  type TerminalRenderedSnapshot,
   type TerminalRestartInput,
 } from "@t3tools/contracts";
 import { afterEach, describe, expect, it } from "vitest";
@@ -359,6 +360,33 @@ describe("TerminalManager", () => {
           event.terminalId === "default",
       ),
     ).toBe(true);
+
+    manager.dispose();
+  });
+
+  it("reads a rendered tail snapshot from retained history", async () => {
+    const { manager, ptyAdapter } = makeManager(500);
+    await manager.open(openInput());
+    const process = ptyAdapter.processes[0];
+    expect(process).toBeDefined();
+    if (!process) return;
+
+    process.emitData("one\n");
+    process.emitData("\u001b[31mtwo\u001b[0m\n");
+    process.emitData("three\n\n");
+
+    const snapshot = await manager.read({
+      threadId: "thread-1",
+      terminalId: DEFAULT_TERMINAL_ID,
+      scope: "tail",
+      maxLines: 2,
+    });
+
+    expect(snapshot).toEqual<TerminalRenderedSnapshot>({
+      text: "two\nthree",
+      totalLines: 3,
+      returnedLineCount: 2,
+    });
 
     manager.dispose();
   });

@@ -7,6 +7,8 @@ import {
   TerminalClearInput,
   TerminalCloseInput,
   TerminalOpenInput,
+  TerminalReadInput,
+  TerminalRenderedSnapshot,
   TerminalResizeInput,
   TerminalRestartInput,
   TerminalWriteInput,
@@ -43,6 +45,12 @@ const decodeTerminalWriteInput = Schema.decodeUnknownSync(TerminalWriteInput);
 const decodeTerminalResizeInput = Schema.decodeUnknownSync(TerminalResizeInput);
 const decodeTerminalClearInput = Schema.decodeUnknownSync(TerminalClearInput);
 const decodeTerminalCloseInput = Schema.decodeUnknownSync(TerminalCloseInput);
+const decodeTerminalReadInput = Schema.decodeUnknownSync(TerminalReadInput);
+const ANSI_OSC_SEQUENCE_PATTERN = new RegExp(String.raw`\u001B\][^\u0007]*(?:\u0007|\u001B\\)`, "g");
+const ANSI_ESCAPE_SEQUENCE_PATTERN = new RegExp(
+  String.raw`\u001B(?:[@-Z\\-_]|\[[0-?]*[ -/]*[@-~])`,
+  "g",
+);
 
 type TerminalSubprocessChecker = (terminalPid: number) => Promise<boolean>;
 
@@ -252,6 +260,20 @@ function capHistory(history: string, maxLines: number): string {
   if (lines.length <= maxLines) return history;
   const capped = lines.slice(lines.length - maxLines).join("\n");
   return hasTrailingNewline ? `${capped}\n` : capped;
+}
+
+function stripAnsiSequences(text: string): string {
+  return text
+    .replace(ANSI_OSC_SEQUENCE_PATTERN, "")
+    .replace(ANSI_ESCAPE_SEQUENCE_PATTERN, "");
+}
+
+function trimTrailingEmptyRenderedLines(lines: string[]): string[] {
+  let end = lines.length;
+  while (end > 0 && lines[end - 1]?.length === 0) {
+    end -= 1;
+  }
+  return end === lines.length ? lines : lines.slice(0, end);
 }
 
 function legacySafeThreadId(threadId: string): string {
@@ -478,6 +500,25 @@ export class TerminalManagerRuntime extends EventEmitter<TerminalManagerEvents> 
         createdAt: new Date().toISOString(),
       });
     });
+  }
+
+  async read(raw: TerminalReadInput): Promise<TerminalRenderedSnapshot> {
+    const input = decodeTerminalReadInput(raw);
+    if (input.scope !== "tail") {
+      throw new Error(`Unsupported terminal read scope: ${input.scope}`);
+    }
+
+    const session = this.sessions.get(toSessionKey(input.threadId, input.terminalId)) ?? null;
+    const history = session ? session.history : await this.readHistory(input.threadId, input.terminalId);
+    const renderedLines = this.renderHistoryLines(history);
+    const totalLines = renderedLines.length;
+    const tailLines = renderedLines.slice(Math.max(0, totalLines - input.maxLines));
+
+    return {
+      text: tailLines.join("\n"),
+      totalLines,
+      returnedLineCount: tailLines.length,
+    };
   }
 
   async restart(raw: TerminalRestartInput): Promise<TerminalSessionSnapshot> {
@@ -1089,6 +1130,16 @@ export class TerminalManagerRuntime extends EventEmitter<TerminalManagerEvents> 
     return [...this.sessions.values()].filter((session) => session.threadId === threadId);
   }
 
+  private renderHistoryLines(history: string): string[] {
+    const strippedHistory = stripAnsiSequences(history)
+      .replace(/\r\n/g, "\n")
+      .replace(/\r/g, "\n");
+    if (strippedHistory.length === 0) {
+      return [];
+    }
+    return trimTrailingEmptyRenderedLines(strippedHistory.split("\n"));
+  }
+
   private async deleteAllHistoryForThread(threadId: string): Promise<void> {
     const threadPrefix = `${toSafeThreadId(threadId)}_`;
     try {
@@ -1202,6 +1253,11 @@ export const TerminalManagerLive = Layer.effect(
         Effect.tryPromise({
           try: () => runtime.clear(input),
           catch: (cause) => new TerminalError({ message: "Failed to clear terminal", cause }),
+        }),
+      read: (input) =>
+        Effect.tryPromise({
+          try: () => runtime.read(input),
+          catch: (cause) => new TerminalError({ message: "Failed to read terminal", cause }),
         }),
       restart: (input) =>
         Effect.tryPromise({
