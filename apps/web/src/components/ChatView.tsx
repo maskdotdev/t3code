@@ -129,7 +129,9 @@ import {
   useComposerThreadDraft,
 } from "../composerDraftStore";
 import {
+  INLINE_TERMINAL_CONTEXT_PLACEHOLDER,
   appendTerminalContextsToPrompt,
+  countInlineTerminalContextPlaceholders,
   formatTerminalContextLabel,
   insertInlineTerminalContextPlaceholder,
   removeInlineTerminalContextPlaceholder,
@@ -212,6 +214,10 @@ const terminalContextIdListsEqual = (
   ids: ReadonlyArray<string>,
 ): boolean =>
   contexts.length === ids.length && contexts.every((context, index) => context.id === ids[index]);
+
+function terminalLabelForIndex(index: number): string {
+  return `Terminal ${index + 1}`;
+}
 
 interface ChatViewProps {
   threadId: ThreadId;
@@ -1002,17 +1008,44 @@ export default function ChatView({ threadId }: ChatViewProps) {
     }),
   );
   const workspaceEntries = workspaceEntriesQuery.data?.entries ?? EMPTY_PROJECT_ENTRIES;
+  const terminalMentionEntries = useMemo(
+    () =>
+      terminalState.terminalIds.map((terminalId, index) => ({
+        terminalId,
+        label: terminalLabelForIndex(index),
+      })),
+    [terminalState.terminalIds],
+  );
   const composerMenuItems = useMemo<ComposerCommandItem[]>(() => {
     if (!composerTrigger) return [];
     if (composerTrigger.kind === "path") {
-      return workspaceEntries.map((entry) => ({
+      const normalizedQuery = composerTrigger.query.trim().toLowerCase();
+      const terminalItems = terminalMentionEntries
+        .filter((entry) => {
+          if (!normalizedQuery) {
+            return true;
+          }
+          return (
+            entry.label.toLowerCase().includes(normalizedQuery) ||
+            entry.terminalId.toLowerCase().includes(normalizedQuery)
+          );
+        })
+        .map((entry) => ({
+          id: `terminal:${entry.terminalId}`,
+          type: "terminal" as const,
+          terminalId: entry.terminalId,
+          label: entry.label,
+          description: entry.terminalId,
+        }));
+      const pathItems = workspaceEntries.map((entry) => ({
         id: `path:${entry.kind}:${entry.path}`,
-        type: "path",
+        type: "path" as const,
         path: entry.path,
         pathKind: entry.kind,
         label: basenameOfPath(entry.path),
         description: entry.parentPath ?? "",
       }));
+      return [...terminalItems, ...pathItems];
     }
 
     if (composerTrigger.kind === "slash-command") {
@@ -1064,7 +1097,7 @@ export default function ChatView({ threadId }: ChatViewProps) {
         label: name,
         description: `${providerLabel} · ${slug}`,
       }));
-  }, [composerTrigger, searchableModelOptions, workspaceEntries]);
+  }, [composerTrigger, searchableModelOptions, terminalMentionEntries, workspaceEntries]);
   const composerMenuOpen = Boolean(composerTrigger);
   const activeComposerMenuItem = useMemo(
     () =>
@@ -1172,11 +1205,42 @@ export default function ChatView({ threadId }: ChatViewProps) {
       focusComposer();
     });
   }, [focusComposer]);
+  const insertTerminalContextIntoDraft = useCallback(
+    (options: {
+      selection: TerminalContextSelection;
+      prompt: string;
+      cursor: number;
+      contextIndex: number;
+    }): boolean => {
+      if (!activeThread) {
+        return false;
+      }
+      const inserted = insertComposerDraftTerminalContext(
+        activeThread.id,
+        options.prompt,
+        {
+          id: randomUUID(),
+          threadId: activeThread.id,
+          createdAt: new Date().toISOString(),
+          ...options.selection,
+        },
+        options.contextIndex,
+      );
+      if (!inserted) {
+        return false;
+      }
+      promptRef.current = options.prompt;
+      setComposerCursor(options.cursor);
+      setComposerTrigger(detectComposerTrigger(options.prompt, options.cursor));
+      window.requestAnimationFrame(() => {
+        composerEditorRef.current?.focusAt(options.cursor);
+      });
+      return true;
+    },
+    [activeThread, insertComposerDraftTerminalContext],
+  );
   const addTerminalContextToDraft = useCallback(
     (selection: TerminalContextSelection) => {
-      if (!activeThread) {
-        return;
-      }
       const snapshot = composerEditorRef.current?.readSnapshot() ?? {
         value: promptRef.current,
         cursor: composerCursor,
@@ -1191,28 +1255,14 @@ export default function ChatView({ threadId }: ChatViewProps) {
         insertion.prompt,
         insertion.cursor,
       );
-      const inserted = insertComposerDraftTerminalContext(
-        activeThread.id,
-        insertion.prompt,
-        {
-          id: randomUUID(),
-          threadId: activeThread.id,
-          createdAt: new Date().toISOString(),
-          ...selection,
-        },
-        insertion.contextIndex,
-      );
-      if (!inserted) {
-        return;
-      }
-      promptRef.current = insertion.prompt;
-      setComposerCursor(nextCollapsedCursor);
-      setComposerTrigger(detectComposerTrigger(insertion.prompt, insertion.cursor));
-      window.requestAnimationFrame(() => {
-        composerEditorRef.current?.focusAt(nextCollapsedCursor);
+      insertTerminalContextIntoDraft({
+        selection,
+        prompt: insertion.prompt,
+        cursor: nextCollapsedCursor,
+        contextIndex: insertion.contextIndex,
       });
     },
-    [activeThread, composerCursor, composerTerminalContexts, insertComposerDraftTerminalContext],
+    [composerCursor, composerTerminalContexts, insertTerminalContextIntoDraft],
   );
   const setTerminalOpen = useCallback(
     (open: boolean) => {
@@ -3182,6 +3232,69 @@ export default function ChatView({ threadId }: ChatViewProps) {
       });
       const { snapshot, trigger } = resolveActiveComposerTrigger();
       if (!trigger) return;
+      if (item.type === "terminal") {
+        const api = readNativeApi();
+        if (!api || !activeThread) {
+          return;
+        }
+        const replacement = `${INLINE_TERMINAL_CONTEXT_PLACEHOLDER} `;
+        const replacementRangeEnd = extendReplacementRangeForTrailingSpace(
+          snapshot.value,
+          trigger.rangeEnd,
+          replacement,
+        );
+        void (async () => {
+          try {
+            const terminalSnapshot = await api.terminal.read({
+              threadId: activeThread.id,
+              terminalId: item.terminalId,
+              scope: "tail",
+              maxLines: 100,
+            });
+            if (terminalSnapshot.returnedLineCount === 0 || terminalSnapshot.text.trim().length === 0) {
+              throw new Error("Selected terminal has no recent output to add.");
+            }
+            const lineEnd = Math.max(1, terminalSnapshot.totalLines);
+            const lineStart = Math.max(
+              1,
+              lineEnd - Math.max(terminalSnapshot.returnedLineCount, 1) + 1,
+            );
+            const applied = replaceTextRange(
+              snapshot.value,
+              trigger.rangeStart,
+              replacementRangeEnd,
+              replacement,
+            );
+            const nextCollapsedCursor = collapseExpandedComposerCursor(applied.text, applied.cursor);
+            const inserted = insertTerminalContextIntoDraft({
+              selection: {
+                terminalId: item.terminalId,
+                terminalLabel: item.label,
+                lineStart,
+                lineEnd,
+                text: terminalSnapshot.text,
+              },
+              prompt: applied.text,
+              cursor: nextCollapsedCursor,
+              contextIndex: countInlineTerminalContextPlaceholders(
+                snapshot.value.slice(0, trigger.rangeStart),
+              ),
+            });
+            if (inserted) {
+              setComposerHighlightedItemId(null);
+            }
+          } catch (error) {
+            toastManager.add({
+              type: "error",
+              title: "Failed to capture terminal context",
+              description:
+                error instanceof Error ? error.message : "Unable to read terminal output.",
+              data: { threadId: activeThread.id },
+            });
+          }
+        })();
+        return;
+      }
       if (item.type === "path") {
         const replacement = `@${item.path} `;
         const replacementRangeEnd = extendReplacementRangeForTrailingSpace(
@@ -3237,8 +3350,10 @@ export default function ChatView({ threadId }: ChatViewProps) {
       }
     },
     [
+      activeThread,
       applyPromptReplacement,
       handleInteractionModeChange,
+      insertTerminalContextIntoDraft,
       onProviderModelSelect,
       resolveActiveComposerTrigger,
     ],

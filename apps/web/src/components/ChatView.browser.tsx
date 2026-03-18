@@ -36,6 +36,7 @@ const PROJECT_ID = "project-1" as ProjectId;
 const NOW_ISO = "2026-03-04T12:00:00.000Z";
 const BASE_TIME_MS = Date.parse(NOW_ISO);
 const ATTACHMENT_SVG = "<svg xmlns='http://www.w3.org/2000/svg' width='120' height='300'></svg>";
+const TERMINAL_TAIL_LINES = Array.from({ length: 100 }, (_, index) => `tail line ${index + 21}`);
 
 interface WsRequestEnvelope {
   id: string;
@@ -435,6 +436,13 @@ function resolveWsRpc(body: WsRequestEnvelope["body"]): unknown {
       exitCode: null,
       exitSignal: null,
       updatedAt: NOW_ISO,
+    };
+  }
+  if (tag === WS_METHODS.terminalRead) {
+    return {
+      text: TERMINAL_TAIL_LINES.join("\n"),
+      totalLines: 120,
+      returnedLineCount: 100,
     };
   }
   return {};
@@ -1035,6 +1043,144 @@ describe("ChatView timeline estimator parity (full app)", () => {
       await vi.waitFor(
         async () => {
           expect((await waitForInteractionModeButton("Chat")).title).toContain("enter plan mode");
+        },
+        { timeout: 8_000, interval: 16 },
+      );
+    } finally {
+      await mounted.cleanup();
+    }
+  });
+
+  it("captures terminal tail context from the @ menu", async () => {
+    useComposerDraftStore.setState({
+      draftsByThreadId: {
+        [THREAD_ID]: {
+          prompt: "@term",
+          images: [],
+          nonPersistedImageIds: [],
+          persistedAttachments: [],
+          terminalContexts: [],
+          provider: null,
+          model: null,
+          runtimeMode: null,
+          interactionMode: null,
+          effort: null,
+          codexFastMode: false,
+        },
+      },
+      draftThreadsByThreadId: {},
+      projectDraftThreadIdByProjectId: {},
+    });
+
+    const mounted = await mountChatView({
+      viewport: DEFAULT_VIEWPORT,
+      snapshot: createSnapshotForTargetUser({
+        targetMessageId: "msg-user-terminal-mention" as MessageId,
+        targetText: "terminal mention target",
+      }),
+    });
+
+    try {
+      const commandItem = await waitForElement(
+        () =>
+          Array.from(document.querySelectorAll<HTMLElement>('[data-slot="command-item"]')).find(
+            (element) => element.textContent?.includes("Terminal 1"),
+          ) ?? null,
+        "Unable to find terminal command item.",
+      );
+
+      commandItem.click();
+
+      await vi.waitFor(
+        () => {
+          const readRequest = wsRequests.find((request) => request._tag === WS_METHODS.terminalRead);
+          expect(readRequest).toMatchObject({
+            _tag: WS_METHODS.terminalRead,
+            threadId: THREAD_ID,
+            terminalId: "default",
+            scope: "tail",
+            maxLines: 100,
+          });
+          expect(document.body.textContent).toContain("Terminal 1 lines 21-120");
+          const draft = useComposerDraftStore.getState().draftsByThreadId[THREAD_ID];
+          expect(draft?.terminalContexts).toHaveLength(1);
+          expect(draft?.terminalContexts[0]).toMatchObject({
+            terminalId: "default",
+            terminalLabel: "Terminal 1",
+            lineStart: 21,
+            lineEnd: 120,
+          });
+          expect(draft?.prompt).toContain(INLINE_TERMINAL_CONTEXT_PLACEHOLDER);
+          expect(draft?.prompt).not.toContain("@term");
+        },
+        { timeout: 8_000, interval: 16 },
+      );
+    } finally {
+      await mounted.cleanup();
+    }
+  });
+
+  it("captures terminal tail context from the @ menu with Enter", async () => {
+    useComposerDraftStore.setState({
+      draftsByThreadId: {
+        [THREAD_ID]: {
+          prompt: "@term",
+          images: [],
+          nonPersistedImageIds: [],
+          persistedAttachments: [],
+          terminalContexts: [],
+          provider: null,
+          model: null,
+          runtimeMode: null,
+          interactionMode: null,
+          effort: null,
+          codexFastMode: false,
+        },
+      },
+      draftThreadsByThreadId: {},
+      projectDraftThreadIdByProjectId: {},
+    });
+
+    const mounted = await mountChatView({
+      viewport: DEFAULT_VIEWPORT,
+      snapshot: createSnapshotForTargetUser({
+        targetMessageId: "msg-user-terminal-mention-enter" as MessageId,
+        targetText: "terminal mention target via enter",
+      }),
+    });
+
+    try {
+      const composerEditor = await waitForComposerEditor();
+      composerEditor.focus();
+      composerEditor.dispatchEvent(
+        new KeyboardEvent("keydown", {
+          key: "Enter",
+          bubbles: true,
+          cancelable: true,
+        }),
+      );
+
+      await vi.waitFor(
+        () => {
+          const readRequest = wsRequests.find((request) => request._tag === WS_METHODS.terminalRead);
+          expect(readRequest).toMatchObject({
+            _tag: WS_METHODS.terminalRead,
+            threadId: THREAD_ID,
+            terminalId: "default",
+            scope: "tail",
+            maxLines: 100,
+          });
+          expect(document.body.textContent).toContain("Terminal 1 lines 21-120");
+          const draft = useComposerDraftStore.getState().draftsByThreadId[THREAD_ID];
+          expect(draft?.terminalContexts).toHaveLength(1);
+          expect(draft?.terminalContexts[0]).toMatchObject({
+            terminalId: "default",
+            terminalLabel: "Terminal 1",
+            lineStart: 21,
+            lineEnd: 120,
+          });
+          expect(draft?.prompt).toContain(INLINE_TERMINAL_CONTEXT_PLACEHOLDER);
+          expect(draft?.prompt).not.toContain("@term");
         },
         { timeout: 8_000, interval: 16 },
       );
