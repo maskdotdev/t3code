@@ -46,7 +46,10 @@ const decodeTerminalResizeInput = Schema.decodeUnknownSync(TerminalResizeInput);
 const decodeTerminalClearInput = Schema.decodeUnknownSync(TerminalClearInput);
 const decodeTerminalCloseInput = Schema.decodeUnknownSync(TerminalCloseInput);
 const decodeTerminalReadInput = Schema.decodeUnknownSync(TerminalReadInput);
-const ANSI_OSC_SEQUENCE_PATTERN = new RegExp(String.raw`\u001B\][^\u0007]*(?:\u0007|\u001B\\)`, "g");
+const ANSI_OSC_SEQUENCE_PATTERN = new RegExp(
+  String.raw`\u001B\][^\u0007]*(?:\u0007|\u001B\\)`,
+  "g",
+);
 const ANSI_ESCAPE_SEQUENCE_PATTERN = new RegExp(
   String.raw`\u001B(?:[@-Z\\-_]|\[[0-?]*[ -/]*[@-~])`,
   "g",
@@ -263,9 +266,7 @@ function capHistory(history: string, maxLines: number): string {
 }
 
 function stripAnsiSequences(text: string): string {
-  return text
-    .replace(ANSI_OSC_SEQUENCE_PATTERN, "")
-    .replace(ANSI_ESCAPE_SEQUENCE_PATTERN, "");
+  return text.replace(ANSI_OSC_SEQUENCE_PATTERN, "").replace(ANSI_ESCAPE_SEQUENCE_PATTERN, "");
 }
 
 function trimTrailingEmptyRenderedLines(lines: string[]): string[] {
@@ -274,6 +275,41 @@ function trimTrailingEmptyRenderedLines(lines: string[]): string[] {
     end -= 1;
   }
   return end === lines.length ? lines : lines.slice(0, end);
+}
+
+function renderStrippedHistoryLines(history: string): string[] {
+  const lines: string[] = [];
+  let currentLine: string[] = [];
+  let cursor = 0;
+
+  const commitLine = () => {
+    lines.push(currentLine.join(""));
+    currentLine = [];
+    cursor = 0;
+  };
+
+  for (const char of history) {
+    if (char === "\n") {
+      commitLine();
+      continue;
+    }
+    if (char === "\r") {
+      cursor = 0;
+      continue;
+    }
+    if (cursor < currentLine.length) {
+      currentLine[cursor] = char;
+    } else {
+      while (currentLine.length < cursor) {
+        currentLine.push(" ");
+      }
+      currentLine.push(char);
+    }
+    cursor += 1;
+  }
+
+  lines.push(currentLine.join(""));
+  return trimTrailingEmptyRenderedLines(lines);
 }
 
 function legacySafeThreadId(threadId: string): string {
@@ -509,7 +545,9 @@ export class TerminalManagerRuntime extends EventEmitter<TerminalManagerEvents> 
     }
 
     const session = this.sessions.get(toSessionKey(input.threadId, input.terminalId)) ?? null;
-    const history = session ? session.history : await this.readHistory(input.threadId, input.terminalId);
+    const history = session
+      ? session.history
+      : await this.readHistory(input.threadId, input.terminalId);
     const renderedLines = this.renderHistoryLines(history);
     const totalLines = renderedLines.length;
     const tailLines = renderedLines.slice(Math.max(0, totalLines - input.maxLines));
@@ -1131,13 +1169,11 @@ export class TerminalManagerRuntime extends EventEmitter<TerminalManagerEvents> 
   }
 
   private renderHistoryLines(history: string): string[] {
-    const strippedHistory = stripAnsiSequences(history)
-      .replace(/\r\n/g, "\n")
-      .replace(/\r/g, "\n");
+    const strippedHistory = stripAnsiSequences(history).replace(/\r\n/g, "\n");
     if (strippedHistory.length === 0) {
       return [];
     }
-    return trimTrailingEmptyRenderedLines(strippedHistory.split("\n"));
+    return renderStrippedHistoryLines(strippedHistory);
   }
 
   private async deleteAllHistoryForThread(threadId: string): Promise<void> {

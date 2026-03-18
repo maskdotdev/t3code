@@ -391,6 +391,34 @@ describe("TerminalManager", () => {
     manager.dispose();
   });
 
+  it("renders carriage-return rewrites in tail snapshots", async () => {
+    const { manager, ptyAdapter } = makeManager(500);
+    await manager.open(openInput());
+    const process = ptyAdapter.processes[0];
+    expect(process).toBeDefined();
+    if (!process) return;
+
+    process.emitData("10%");
+    process.emitData("\r25%");
+    process.emitData("\r100%\n");
+    process.emitData("done\n");
+
+    const snapshot = await manager.read({
+      threadId: "thread-1",
+      terminalId: DEFAULT_TERMINAL_ID,
+      scope: "tail",
+      maxLines: 2,
+    });
+
+    expect(snapshot).toEqual<TerminalRenderedSnapshot>({
+      text: "100%\ndone",
+      totalLines: 2,
+      returnedLineCount: 2,
+    });
+
+    manager.dispose();
+  });
+
   it("restarts terminal with empty transcript and respawns pty", async () => {
     const { manager, ptyAdapter, logsDir } = makeManager();
     await manager.open(openInput());
