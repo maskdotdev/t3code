@@ -3154,7 +3154,7 @@ export default function ChatView({ threadId }: ChatViewProps) {
       rangeEnd: number,
       replacement: string,
       options?: { expectedText?: string },
-    ): boolean => {
+    ): { text: string; cursor: number } | null => {
       const currentText = promptRef.current;
       const safeStart = Math.max(0, Math.min(currentText.length, rangeStart));
       const safeEnd = Math.max(safeStart, Math.min(currentText.length, rangeEnd));
@@ -3162,7 +3162,7 @@ export default function ChatView({ threadId }: ChatViewProps) {
         options?.expectedText !== undefined &&
         currentText.slice(safeStart, safeEnd) !== options.expectedText
       ) {
-        return false;
+        return null;
       }
       const next = replaceTextRange(promptRef.current, rangeStart, rangeEnd, replacement);
       const nextCursor = collapseExpandedComposerCursor(next.text, next.cursor);
@@ -3189,7 +3189,7 @@ export default function ChatView({ threadId }: ChatViewProps) {
       window.requestAnimationFrame(() => {
         composerEditorRef.current?.focusAt(nextCursor);
       });
-      return true;
+      return next;
     },
     [activePendingProgress?.activeQuestion, activePendingUserInput, setPrompt],
   );
@@ -3243,6 +3243,7 @@ export default function ChatView({ threadId }: ChatViewProps) {
           trigger.rangeEnd,
           replacement,
         );
+        const expectedText = snapshot.value.slice(trigger.rangeStart, replacementRangeEnd);
         void (async () => {
           try {
             const terminalSnapshot = await api.terminal.read({
@@ -3251,7 +3252,10 @@ export default function ChatView({ threadId }: ChatViewProps) {
               scope: "tail",
               maxLines: 100,
             });
-            if (terminalSnapshot.returnedLineCount === 0 || terminalSnapshot.text.trim().length === 0) {
+            if (
+              terminalSnapshot.returnedLineCount === 0 ||
+              terminalSnapshot.text.trim().length === 0
+            ) {
               throw new Error("Selected terminal has no recent output to add.");
             }
             const lineEnd = Math.max(1, terminalSnapshot.totalLines);
@@ -3259,13 +3263,19 @@ export default function ChatView({ threadId }: ChatViewProps) {
               1,
               lineEnd - Math.max(terminalSnapshot.returnedLineCount, 1) + 1,
             );
-            const applied = replaceTextRange(
-              snapshot.value,
+            const applied = applyPromptReplacement(
               trigger.rangeStart,
               replacementRangeEnd,
               replacement,
+              { expectedText },
             );
-            const nextCollapsedCursor = collapseExpandedComposerCursor(applied.text, applied.cursor);
+            if (!applied) {
+              return;
+            }
+            const nextCollapsedCursor = collapseExpandedComposerCursor(
+              applied.text,
+              applied.cursor,
+            );
             const inserted = insertTerminalContextIntoDraft({
               selection: {
                 terminalId: item.terminalId,
@@ -3277,7 +3287,7 @@ export default function ChatView({ threadId }: ChatViewProps) {
               prompt: applied.text,
               cursor: nextCollapsedCursor,
               contextIndex: countInlineTerminalContextPlaceholders(
-                snapshot.value.slice(0, trigger.rangeStart),
+                applied.text.slice(0, trigger.rangeStart),
               ),
             });
             if (inserted) {
