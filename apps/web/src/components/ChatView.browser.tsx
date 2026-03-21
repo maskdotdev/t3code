@@ -108,6 +108,21 @@ function createDeferred<T>() {
   return { promise, resolve };
 }
 
+function createThreadDraft(prompt: string) {
+  return {
+    prompt,
+    images: [],
+    nonPersistedImageIds: [],
+    persistedAttachments: [],
+    terminalContexts: [],
+    provider: null,
+    model: null,
+    modelOptions: null,
+    runtimeMode: null,
+    interactionMode: null,
+  };
+}
+
 function isoAt(offsetSeconds: number): string {
   return new Date(BASE_TIME_MS + offsetSeconds * 1_000).toISOString();
 }
@@ -1077,19 +1092,7 @@ describe("ChatView timeline estimator parity (full app)", () => {
   it("captures terminal tail context from the @ menu", async () => {
     useComposerDraftStore.setState({
       draftsByThreadId: {
-        [THREAD_ID]: {
-          prompt: "@term",
-          images: [],
-          nonPersistedImageIds: [],
-          persistedAttachments: [],
-          terminalContexts: [],
-          provider: null,
-          model: null,
-          runtimeMode: null,
-          interactionMode: null,
-          effort: null,
-          codexFastMode: false,
-        },
+        [THREAD_ID]: createThreadDraft("@term"),
       },
       draftThreadsByThreadId: {},
       projectDraftThreadIdByProjectId: {},
@@ -1148,19 +1151,7 @@ describe("ChatView timeline estimator parity (full app)", () => {
   it("captures terminal tail context from the @ menu with Enter", async () => {
     useComposerDraftStore.setState({
       draftsByThreadId: {
-        [THREAD_ID]: {
-          prompt: "@term",
-          images: [],
-          nonPersistedImageIds: [],
-          persistedAttachments: [],
-          terminalContexts: [],
-          provider: null,
-          model: null,
-          runtimeMode: null,
-          interactionMode: null,
-          effort: null,
-          codexFastMode: false,
-        },
+        [THREAD_ID]: createThreadDraft("@term"),
       },
       draftThreadsByThreadId: {},
       projectDraftThreadIdByProjectId: {},
@@ -1230,19 +1221,7 @@ describe("ChatView timeline estimator parity (full app)", () => {
     };
     useComposerDraftStore.setState({
       draftsByThreadId: {
-        [THREAD_ID]: {
-          prompt: "@term",
-          images: [],
-          nonPersistedImageIds: [],
-          persistedAttachments: [],
-          terminalContexts: [],
-          provider: null,
-          model: null,
-          runtimeMode: null,
-          interactionMode: null,
-          effort: null,
-          codexFastMode: false,
-        },
+        [THREAD_ID]: createThreadDraft("@term"),
       },
       draftThreadsByThreadId: {},
       projectDraftThreadIdByProjectId: {},
