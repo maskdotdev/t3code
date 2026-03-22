@@ -419,6 +419,32 @@ describe("TerminalManager", () => {
     manager.dispose();
   });
 
+  it("applies erase-in-line control sequences in tail snapshots", async () => {
+    const { manager, ptyAdapter } = makeManager(500);
+    await manager.open(openInput());
+    const process = ptyAdapter.processes[0];
+    expect(process).toBeDefined();
+    if (!process) return;
+
+    process.emitData("foobar");
+    process.emitData("\rbar\u001b[K\n");
+
+    const snapshot = await manager.read({
+      threadId: "thread-1",
+      terminalId: DEFAULT_TERMINAL_ID,
+      scope: "tail",
+      maxLines: 1,
+    });
+
+    expect(snapshot).toEqual<TerminalRenderedSnapshot>({
+      text: "bar",
+      totalLines: 1,
+      returnedLineCount: 1,
+    });
+
+    manager.dispose();
+  });
+
   it("restarts terminal with empty transcript and respawns pty", async () => {
     const { manager, ptyAdapter, logsDir } = makeManager();
     await manager.open(openInput());

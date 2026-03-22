@@ -1226,11 +1226,72 @@ export default function ChatView({ threadId }: ChatViewProps) {
       focusComposer();
     });
   }, [focusComposer]);
+  const commitComposerPromptState = useCallback(
+    (options: {
+      prompt: string;
+      cursor: number;
+      expandedCursor: number;
+      persistPrompt: boolean;
+    }) => {
+      promptRef.current = options.prompt;
+      const activePendingQuestion = activePendingProgress?.activeQuestion;
+      if (activePendingQuestion && activePendingUserInput) {
+        setPendingUserInputAnswersByRequestId((existing) => ({
+          ...existing,
+          [activePendingUserInput.requestId]: {
+            ...existing[activePendingUserInput.requestId],
+            [activePendingQuestion.id]: setPendingUserInputCustomAnswer(
+              existing[activePendingUserInput.requestId]?.[activePendingQuestion.id],
+              options.prompt,
+            ),
+          },
+        }));
+      } else if (options.persistPrompt) {
+        setPrompt(options.prompt);
+      }
+      setComposerCursor(options.cursor);
+      setComposerTrigger(detectComposerTrigger(options.prompt, options.expandedCursor));
+      window.requestAnimationFrame(() => {
+        composerEditorRef.current?.focusAt(options.cursor);
+      });
+    },
+    [
+      activePendingProgress?.activeQuestion,
+      activePendingUserInput,
+      setPendingUserInputAnswersByRequestId,
+      setPrompt,
+    ],
+  );
+  const resolvePromptReplacement = useCallback(
+    (
+      rangeStart: number,
+      rangeEnd: number,
+      replacement: string,
+      options?: { expectedText?: string },
+    ): { text: string; cursor: number; collapsedCursor: number } | null => {
+      const currentText = promptRef.current;
+      const safeStart = Math.max(0, Math.min(currentText.length, rangeStart));
+      const safeEnd = Math.max(safeStart, Math.min(currentText.length, rangeEnd));
+      if (
+        options?.expectedText !== undefined &&
+        currentText.slice(safeStart, safeEnd) !== options.expectedText
+      ) {
+        return null;
+      }
+      const next = replaceTextRange(currentText, rangeStart, rangeEnd, replacement);
+      return {
+        ...next,
+        collapsedCursor: collapseExpandedComposerCursor(next.text, next.cursor),
+      };
+    },
+    [],
+  );
   const insertTerminalContextIntoDraft = useCallback(
     (options: {
       selection: TerminalContextSelection;
       prompt: string;
       cursor: number;
+      expandedCursor: number;
       contextIndex: number;
     }): boolean => {
       if (!activeThread) {
@@ -1250,15 +1311,15 @@ export default function ChatView({ threadId }: ChatViewProps) {
       if (!inserted) {
         return false;
       }
-      promptRef.current = options.prompt;
-      setComposerCursor(options.cursor);
-      setComposerTrigger(detectComposerTrigger(options.prompt, options.cursor));
-      window.requestAnimationFrame(() => {
-        composerEditorRef.current?.focusAt(options.cursor);
+      commitComposerPromptState({
+        prompt: options.prompt,
+        cursor: options.cursor,
+        expandedCursor: options.expandedCursor,
+        persistPrompt: false,
       });
       return true;
     },
-    [activeThread, insertComposerDraftTerminalContext],
+    [activeThread, commitComposerPromptState, insertComposerDraftTerminalContext],
   );
   const addTerminalContextToDraft = useCallback(
     (selection: TerminalContextSelection) => {
@@ -1280,6 +1341,7 @@ export default function ChatView({ threadId }: ChatViewProps) {
         selection,
         prompt: insertion.prompt,
         cursor: nextCollapsedCursor,
+        expandedCursor: insertion.cursor,
         contextIndex: insertion.contextIndex,
       });
     },
@@ -3207,43 +3269,19 @@ export default function ChatView({ threadId }: ChatViewProps) {
       replacement: string,
       options?: { expectedText?: string },
     ): { text: string; cursor: number } | null => {
-      const currentText = promptRef.current;
-      const safeStart = Math.max(0, Math.min(currentText.length, rangeStart));
-      const safeEnd = Math.max(safeStart, Math.min(currentText.length, rangeEnd));
-      if (
-        options?.expectedText !== undefined &&
-        currentText.slice(safeStart, safeEnd) !== options.expectedText
-      ) {
+      const next = resolvePromptReplacement(rangeStart, rangeEnd, replacement, options);
+      if (!next) {
         return null;
       }
-      const next = replaceTextRange(promptRef.current, rangeStart, rangeEnd, replacement);
-      const nextCursor = collapseExpandedComposerCursor(next.text, next.cursor);
-      promptRef.current = next.text;
-      const activePendingQuestion = activePendingProgress?.activeQuestion;
-      if (activePendingQuestion && activePendingUserInput) {
-        setPendingUserInputAnswersByRequestId((existing) => ({
-          ...existing,
-          [activePendingUserInput.requestId]: {
-            ...existing[activePendingUserInput.requestId],
-            [activePendingQuestion.id]: setPendingUserInputCustomAnswer(
-              existing[activePendingUserInput.requestId]?.[activePendingQuestion.id],
-              next.text,
-            ),
-          },
-        }));
-      } else {
-        setPrompt(next.text);
-      }
-      setComposerCursor(nextCursor);
-      setComposerTrigger(
-        detectComposerTrigger(next.text, expandCollapsedComposerCursor(next.text, nextCursor)),
-      );
-      window.requestAnimationFrame(() => {
-        composerEditorRef.current?.focusAt(nextCursor);
+      commitComposerPromptState({
+        prompt: next.text,
+        cursor: next.collapsedCursor,
+        expandedCursor: next.cursor,
+        persistPrompt: true,
       });
       return next;
     },
-    [activePendingProgress?.activeQuestion, activePendingUserInput, setPrompt],
+    [commitComposerPromptState, resolvePromptReplacement],
   );
 
   const readComposerSnapshot = useCallback((): {
@@ -3315,7 +3353,7 @@ export default function ChatView({ threadId }: ChatViewProps) {
               1,
               lineEnd - Math.max(terminalSnapshot.returnedLineCount, 1) + 1,
             );
-            const applied = applyPromptReplacement(
+            const applied = resolvePromptReplacement(
               trigger.rangeStart,
               replacementRangeEnd,
               replacement,
@@ -3338,6 +3376,7 @@ export default function ChatView({ threadId }: ChatViewProps) {
               },
               prompt: applied.text,
               cursor: nextCollapsedCursor,
+              expandedCursor: applied.cursor,
               contextIndex: countInlineTerminalContextPlaceholders(
                 applied.text.slice(0, trigger.rangeStart),
               ),
@@ -3417,6 +3456,7 @@ export default function ChatView({ threadId }: ChatViewProps) {
       handleInteractionModeChange,
       insertTerminalContextIntoDraft,
       onProviderModelSelect,
+      resolvePromptReplacement,
       resolveActiveComposerTrigger,
     ],
   );

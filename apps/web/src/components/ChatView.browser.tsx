@@ -1281,6 +1281,119 @@ describe("ChatView timeline estimator parity (full app)", () => {
     }
   });
 
+  it("leaves the prompt unchanged when adding a duplicate terminal tail", async () => {
+    useComposerDraftStore.setState({
+      draftsByThreadId: {
+        [THREAD_ID]: {
+          ...createThreadDraft(`${INLINE_TERMINAL_CONTEXT_PLACEHOLDER} @term`),
+          terminalContexts: [
+            {
+              id: "ctx-existing-default",
+              threadId: THREAD_ID,
+              terminalId: "default",
+              terminalLabel: "Terminal 1",
+              lineStart: 21,
+              lineEnd: 120,
+              text: TERMINAL_TAIL_LINES.join("\n"),
+              createdAt: NOW_ISO,
+            },
+          ],
+        },
+      },
+      draftThreadsByThreadId: {},
+      projectDraftThreadIdByProjectId: {},
+    });
+
+    const mounted = await mountChatView({
+      viewport: DEFAULT_VIEWPORT,
+      snapshot: createSnapshotForTargetUser({
+        targetMessageId: "msg-user-terminal-mention-dedupe" as MessageId,
+        targetText: "duplicate terminal mention target",
+      }),
+    });
+
+    try {
+      const commandItem = await waitForElement(
+        () =>
+          Array.from(document.querySelectorAll<HTMLElement>('[data-slot="command-item"]')).find(
+            (element) => element.textContent?.includes("Terminal 1"),
+          ) ?? null,
+        "Unable to find terminal command item.",
+      );
+
+      commandItem.click();
+
+      await vi.waitFor(
+        () => {
+          const draft = useComposerDraftStore.getState().draftsByThreadId[THREAD_ID];
+          expect(draft?.terminalContexts).toHaveLength(1);
+          expect(draft?.prompt).toBe(`${INLINE_TERMINAL_CONTEXT_PLACEHOLDER} @term`);
+        },
+        { timeout: 8_000, interval: 16 },
+      );
+    } finally {
+      await mounted.cleanup();
+    }
+  });
+
+  it("closes the @ menu after adding terminal context after an existing mention", async () => {
+    resolveWsRpcOverride = (body) => {
+      if (body._tag !== WS_METHODS.projectsSearchEntries) {
+        return USE_DEFAULT_WS_RPC;
+      }
+      return {
+        entries: [
+          {
+            kind: "file",
+            path: "src/foo.ts",
+            parentPath: "src",
+          },
+        ],
+        truncated: false,
+      };
+    };
+    useComposerDraftStore.setState({
+      draftsByThreadId: {
+        [THREAD_ID]: createThreadDraft("@src/foo.ts @term"),
+      },
+      draftThreadsByThreadId: {},
+      projectDraftThreadIdByProjectId: {},
+    });
+
+    const mounted = await mountChatView({
+      viewport: DEFAULT_VIEWPORT,
+      snapshot: createSnapshotForTargetUser({
+        targetMessageId: "msg-user-terminal-mention-after-path" as MessageId,
+        targetText: "terminal mention after path target",
+      }),
+    });
+
+    try {
+      const commandItem = await waitForElement(
+        () =>
+          Array.from(document.querySelectorAll<HTMLElement>('[data-slot="command-item"]')).find(
+            (element) => element.textContent?.includes("Terminal 1"),
+          ) ?? null,
+        "Unable to find terminal command item.",
+      );
+
+      commandItem.click();
+
+      await vi.waitFor(
+        () => {
+          const draft = useComposerDraftStore.getState().draftsByThreadId[THREAD_ID];
+          expect(draft?.terminalContexts).toHaveLength(1);
+          expect(draft?.prompt).toContain(INLINE_TERMINAL_CONTEXT_PLACEHOLDER);
+          expect(draft?.prompt).not.toContain("@term");
+          expect(document.querySelectorAll('[data-slot="command-item"]')).toHaveLength(0);
+        },
+        { timeout: 8_000, interval: 16 },
+      );
+    } finally {
+      await mounted.cleanup();
+    }
+  });
+
   it("keeps backspaced terminal context pills removed when a new one is added", async () => {
     const removedLabel = "Terminal 1 lines 1-2";
     const addedLabel = "Terminal 2 lines 9-10";

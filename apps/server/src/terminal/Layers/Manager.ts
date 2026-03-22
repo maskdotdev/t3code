@@ -46,14 +46,7 @@ const decodeTerminalResizeInput = Schema.decodeUnknownSync(TerminalResizeInput);
 const decodeTerminalClearInput = Schema.decodeUnknownSync(TerminalClearInput);
 const decodeTerminalCloseInput = Schema.decodeUnknownSync(TerminalCloseInput);
 const decodeTerminalReadInput = Schema.decodeUnknownSync(TerminalReadInput);
-const ANSI_OSC_SEQUENCE_PATTERN = new RegExp(
-  String.raw`\u001B\][^\u0007]*(?:\u0007|\u001B\\)`,
-  "g",
-);
-const ANSI_ESCAPE_SEQUENCE_PATTERN = new RegExp(
-  String.raw`\u001B(?:[@-Z\\-_]|\[[0-?]*[ -/]*[@-~])`,
-  "g",
-);
+const ANSI_ESCAPE = "\u001B";
 
 type TerminalSubprocessChecker = (terminalPid: number) => Promise<boolean>;
 
@@ -265,10 +258,6 @@ function capHistory(history: string, maxLines: number): string {
   return hasTrailingNewline ? `${capped}\n` : capped;
 }
 
-function stripAnsiSequences(text: string): string {
-  return text.replace(ANSI_OSC_SEQUENCE_PATTERN, "").replace(ANSI_ESCAPE_SEQUENCE_PATTERN, "");
-}
-
 function trimTrailingEmptyRenderedLines(lines: string[]): string[] {
   let end = lines.length;
   while (end > 0 && lines[end - 1]?.length === 0) {
@@ -277,7 +266,87 @@ function trimTrailingEmptyRenderedLines(lines: string[]): string[] {
   return end === lines.length ? lines : lines.slice(0, end);
 }
 
-function renderStrippedHistoryLines(history: string): string[] {
+function readAnsiEscapeSequence(
+  history: string,
+  startIndex: number,
+): { length: number; finalByte: string | null; parameters: string } | null {
+  if (history[startIndex] !== ANSI_ESCAPE) {
+    return null;
+  }
+
+  const nextChar = history[startIndex + 1];
+  if (!nextChar) {
+    return { length: 1, finalByte: null, parameters: "" };
+  }
+
+  if (nextChar === "]") {
+    let index = startIndex + 2;
+    while (index < history.length) {
+      const char = history[index];
+      if (char === "\u0007") {
+        return { length: index - startIndex + 1, finalByte: null, parameters: "" };
+      }
+      if (char === ANSI_ESCAPE && history[index + 1] === "\\") {
+        return { length: index - startIndex + 2, finalByte: null, parameters: "" };
+      }
+      index += 1;
+    }
+    return { length: history.length - startIndex, finalByte: null, parameters: "" };
+  }
+
+  if (nextChar === "[") {
+    let index = startIndex + 2;
+    while (index < history.length) {
+      const char = history[index];
+      if (!char) {
+        break;
+      }
+      const code = char.charCodeAt(0);
+      if (code >= 0x40 && code <= 0x7e) {
+        return {
+          length: index - startIndex + 1,
+          finalByte: char,
+          parameters: history.slice(startIndex + 2, index),
+        };
+      }
+      index += 1;
+    }
+    return { length: history.length - startIndex, finalByte: null, parameters: "" };
+  }
+
+  return { length: 2, finalByte: null, parameters: "" };
+}
+
+function parseEraseInLineMode(parameters: string): 0 | 1 | 2 {
+  if (parameters.length === 0) {
+    return 0;
+  }
+  const mode = Number(parameters.split(";").at(-1) ?? "0");
+  if (mode === 1 || mode === 2) {
+    return mode;
+  }
+  return 0;
+}
+
+function eraseRenderedLine(line: string[], cursor: number, mode: 0 | 1 | 2): string[] {
+  if (mode === 2) {
+    return [];
+  }
+  if (mode === 1) {
+    if (line.length === 0) {
+      return line;
+    }
+    const nextLine = [...line];
+    const end = Math.min(cursor, nextLine.length - 1);
+    for (let index = 0; index <= end; index += 1) {
+      nextLine[index] = " ";
+    }
+    return nextLine;
+  }
+  return line.slice(0, cursor);
+}
+
+function renderTerminalHistoryLines(history: string): string[] {
   const lines: string[] = [];
   let currentLine: string[] = [];
   let cursor = 0;
@@ -288,7 +357,28 @@ function renderStrippedHistoryLines(history: string): string[] {
     cursor = 0;
   };
 
-  for (const char of history) {
+  const normalizedHistory = history.replace(/\r\n/g, "\n");
+
+  for (let index = 0; index < normalizedHistory.length; index += 1) {
+    const char = normalizedHistory[index];
+    if (!char) {
+      continue;
+    }
+    if (char === ANSI_ESCAPE) {
+      const escapeSequence = readAnsiEscapeSequence(normalizedHistory, index);
+      if (!escapeSequence) {
+        continue;
+      }
+      if (escapeSequence.finalByte === "K") {
+        currentLine = eraseRenderedLine(
+          currentLine,
+          cursor,
+          parseEraseInLineMode(escapeSequence.parameters),
+        );
+      }
+      index += escapeSequence.length - 1;
+      continue;
+    }
     if (char === "\n") {
       commitLine();
       continue;
@@ -1169,11 +1259,10 @@ export class TerminalManagerRuntime extends EventEmitter<TerminalManagerEvents> 
   }
 
   private renderHistoryLines(history: string): string[] {
-    const strippedHistory = stripAnsiSequences(history).replace(/\r\n/g, "\n");
-    if (strippedHistory.length === 0) {
+    if (history.length === 0) {
       return [];
     }
-    return renderStrippedHistoryLines(strippedHistory);
+    return renderTerminalHistoryLines(history);
   }
 
   private async deleteAllHistoryForThread(threadId: string): Promise<void> {
