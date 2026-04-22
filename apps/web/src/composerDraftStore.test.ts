@@ -32,7 +32,10 @@ import {
   insertInlineTerminalContextPlaceholder,
   type TerminalContextDraft,
 } from "./lib/terminalContext";
-import { type DiffContextCommentDraft } from "./lib/diffContextComments";
+import {
+  INLINE_DIFF_CONTEXT_COMMENT_PLACEHOLDER,
+  type DiffContextCommentDraft,
+} from "./lib/diffContextComments";
 import { createDebouncedStorage } from "./lib/storage";
 
 function makeImage(input: {
@@ -335,6 +338,9 @@ describe("composerDraftStore diff context comments", () => {
     expect(
       draftFor(threadId, TEST_ENVIRONMENT_ID)?.diffContextComments.map((comment) => comment.id),
     ).toEqual(["comment-1", "comment-2"]);
+    expect(draftFor(threadId, TEST_ENVIRONMENT_ID)?.prompt).toBe(
+      INLINE_DIFF_CONTEXT_COMMENT_PLACEHOLDER.repeat(2),
+    );
 
     store.updateDiffContextComment(threadRef, "comment-1", {
       body: "Use the shared helper instead.",
@@ -351,6 +357,9 @@ describe("composerDraftStore diff context comments", () => {
     expect(
       draftFor(threadId, TEST_ENVIRONMENT_ID)?.diffContextComments.map((comment) => comment.id),
     ).toEqual(["comment-1"]);
+    expect(draftFor(threadId, TEST_ENVIRONMENT_ID)?.prompt).toBe(
+      INLINE_DIFF_CONTEXT_COMMENT_PLACEHOLDER,
+    );
 
     store.clearDiffContextComments(threadRef);
     store.clearDiffContextComments(threadRef);

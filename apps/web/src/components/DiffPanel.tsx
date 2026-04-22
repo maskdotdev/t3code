@@ -43,8 +43,8 @@ import {
   useDiffContextCommentDrafts,
 } from "./DiffPanel.logic";
 import {
-  DIFF_CONTEXT_COMMENT_CARD_STYLE,
   DiffContextCommentDraft as DiffContextCommentDraftCard,
+  DiffContextCommentPreview,
 } from "./DiffContextCommentDraft";
 import { ToggleGroup, Toggle } from "./ui/toggle-group";
 
@@ -163,28 +163,6 @@ interface DiffPanelProps {
 }
 
 export { DiffWorkerPoolProvider } from "./DiffWorkerPoolProvider";
-
-function DiffContextCommentPreview(props: { body: string; onEdit: () => void }) {
-  const { body, onEdit } = props;
-
-  return (
-    <div
-      className="ml-2 mr-5 my-1 min-w-0"
-      style={DIFF_CONTEXT_COMMENT_CARD_STYLE}
-      onClick={(event) => event.stopPropagation()}
-      onMouseDown={(event) => event.stopPropagation()}
-      onPointerDown={(event) => event.stopPropagation()}
-    >
-      <button
-        type="button"
-        onClick={onEdit}
-        className="w-full rounded-md border border-border bg-card px-4 py-3 text-left text-sm text-foreground transition-colors duration-200 hover:border-ring/45 focus-visible:border-ring/45 focus-visible:outline-none"
-      >
-        <p className="whitespace-pre-wrap break-words">{body}</p>
-      </button>
-    </div>
-  );
-}
 
 export default function DiffPanel({ mode = "inline" }: DiffPanelProps) {
   const navigate = useNavigate();

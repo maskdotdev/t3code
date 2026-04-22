@@ -14,7 +14,11 @@ import { LegendList, type LegendListRef } from "@legendapp/list/react";
 import { deriveTimelineEntries, formatElapsed } from "../../session-logic";
 import { type TurnDiffSummary } from "../../types";
 import { summarizeTurnDiffStats } from "../../lib/turnDiffTree";
-import { extractTrailingDiffContextComments } from "../../lib/diffContextComments";
+import {
+  extractTrailingDiffContextComments,
+  formatInlineDiffContextCommentLabel,
+  type ParsedDiffContextCommentEntry,
+} from "../../lib/diffContextComments";
 import ChatMarkdown from "../ChatMarkdown";
 import {
   BotIcon,
@@ -23,7 +27,6 @@ import {
   EyeIcon,
   GlobeIcon,
   HammerIcon,
-  MessageSquareIcon,
   type LucideIcon,
   SquarePenIcon,
   TerminalIcon,
@@ -47,6 +50,7 @@ import {
   type MessagesTimelineRow,
 } from "./MessagesTimeline.logic";
 import { TerminalContextInlineChip } from "./TerminalContextInlineChip";
+import { DiffContextCommentInlineChip } from "./DiffContextCommentInlineChip";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import {
   deriveDisplayedUserMessageState,
@@ -348,10 +352,12 @@ function TimelineRowContent({ row }: { row: TimelineRow }) {
                   </div>
                 )}
                 {(displayedUserMessage.visibleText.trim().length > 0 ||
-                  terminalContexts.length > 0) && (
+                  terminalContexts.length > 0 ||
+                  extractedDiffComments.comments.length > 0) && (
                   <UserMessageBody
                     text={displayedUserMessage.visibleText}
                     terminalContexts={terminalContexts}
+                    diffContextComments={extractedDiffComments.comments}
                   />
                 )}
                 <div className="mt-1.5 flex items-center justify-end gap-2">
@@ -372,33 +378,6 @@ function TimelineRowContent({ row }: { row: TimelineRow }) {
                       </Button>
                     )}
                   </div>
-                  {extractedDiffComments.commentCount > 0 && (
-                    <Tooltip>
-                      <TooltipTrigger
-                        render={
-                          <button
-                            type="button"
-                            className="inline-flex items-center gap-1 text-muted-foreground/50"
-                            aria-label={`${extractedDiffComments.commentCount} diff context comment${
-                              extractedDiffComments.commentCount === 1 ? "" : "s"
-                            }`}
-                            title={extractedDiffComments.previewTitle ?? undefined}
-                          >
-                            <MessageSquareIcon className="size-3" />
-                            <span className="text-[10px] font-medium">
-                              {extractedDiffComments.commentCount}
-                            </span>
-                          </button>
-                        }
-                      />
-                      <TooltipPopup
-                        side="top"
-                        className="max-w-72 whitespace-pre-wrap leading-tight"
-                      >
-                        {extractedDiffComments.previewTitle}
-                      </TooltipPopup>
-                    </Tooltip>
-                  )}
                   <p className="text-right text-xs text-muted-foreground/50">
                     {formatTimestamp(row.message.createdAt, ctx.timestampFormat)}
                   </p>
@@ -713,42 +692,82 @@ const UserMessageTerminalContextInlineLabel = memo(
   },
 );
 
+const UserMessageDiffContextCommentInlineLabel = memo(
+  function UserMessageDiffContextCommentInlineLabel(props: {
+    comment: ParsedDiffContextCommentEntry;
+  }) {
+    const tooltipText =
+      props.comment.body.length > 0
+        ? `${props.comment.header}\n${props.comment.body}`
+        : props.comment.header;
+
+    return <DiffContextCommentInlineChip label={props.comment.header} tooltipText={tooltipText} />;
+  },
+);
+
 const UserMessageBody = memo(function UserMessageBody(props: {
   text: string;
   terminalContexts: ParsedTerminalContextEntry[];
+  diffContextComments: ParsedDiffContextCommentEntry[];
 }) {
-  if (props.terminalContexts.length > 0) {
+  if (props.terminalContexts.length > 0 || props.diffContextComments.length > 0) {
     const hasEmbeddedInlineLabels = textContainsInlineTerminalContextLabels(
       props.text,
       props.terminalContexts,
     );
-    const inlinePrefix = buildInlineTerminalContextText(props.terminalContexts);
+    const hasEmbeddedDiffLabels = props.diffContextComments.some((comment) =>
+      props.text.includes(formatInlineDiffContextCommentLabel(comment.header)),
+    );
     const inlineNodes: ReactNode[] = [];
 
-    if (hasEmbeddedInlineLabels) {
+    if (hasEmbeddedInlineLabels || hasEmbeddedDiffLabels) {
+      const inlineEntries = [
+        ...props.terminalContexts.map((context) => ({
+          kind: "terminal" as const,
+          key: `user-terminal-context-inline:${context.header}`,
+          label: formatInlineTerminalContextLabel(context.header),
+          node: (
+            <UserMessageTerminalContextInlineLabel
+              key={`user-terminal-context-inline:${context.header}`}
+              context={context}
+            />
+          ),
+        })),
+        ...props.diffContextComments.map((comment) => ({
+          kind: "diff" as const,
+          key: `user-diff-context-comment-inline:${comment.header}`,
+          label: formatInlineDiffContextCommentLabel(comment.header),
+          node: (
+            <UserMessageDiffContextCommentInlineLabel
+              key={`user-diff-context-comment-inline:${comment.header}`}
+              comment={comment}
+            />
+          ),
+        })),
+      ];
+      const matchedInlineEntries = inlineEntries
+        .map((entry) => ({ ...entry, matchIndex: props.text.indexOf(entry.label) }))
+        .filter((entry) => entry.matchIndex >= 0)
+        .toSorted((left, right) => left.matchIndex - right.matchIndex);
       let cursor = 0;
 
-      for (const context of props.terminalContexts) {
-        const label = formatInlineTerminalContextLabel(context.header);
-        const matchIndex = props.text.indexOf(label, cursor);
-        if (matchIndex === -1) {
-          inlineNodes.length = 0;
-          break;
+      if (matchedInlineEntries.length === inlineEntries.length) {
+        for (const entry of matchedInlineEntries) {
+          const matchIndex = props.text.indexOf(entry.label, cursor);
+          if (matchIndex < cursor) {
+            inlineNodes.length = 0;
+            break;
+          }
+          if (matchIndex > cursor) {
+            inlineNodes.push(
+              <span key={`user-inline-context-before:${entry.label}:${cursor}`}>
+                {props.text.slice(cursor, matchIndex)}
+              </span>,
+            );
+          }
+          inlineNodes.push(entry.node);
+          cursor = matchIndex + entry.label.length;
         }
-        if (matchIndex > cursor) {
-          inlineNodes.push(
-            <span key={`user-terminal-context-inline-before:${context.header}:${cursor}`}>
-              {props.text.slice(cursor, matchIndex)}
-            </span>,
-          );
-        }
-        inlineNodes.push(
-          <UserMessageTerminalContextInlineLabel
-            key={`user-terminal-context-inline:${context.header}`}
-            context={context}
-          />,
-        );
-        cursor = matchIndex + label.length;
       }
 
       if (inlineNodes.length > 0) {
@@ -781,10 +800,26 @@ const UserMessageBody = memo(function UserMessageBody(props: {
         </span>,
       );
     }
+    for (const comment of props.diffContextComments) {
+      inlineNodes.push(
+        <UserMessageDiffContextCommentInlineLabel
+          key={`user-diff-context-comment-inline:${comment.header}`}
+          comment={comment}
+        />,
+      );
+      inlineNodes.push(
+        <span key={`user-diff-context-comment-inline-space:${comment.header}`} aria-hidden="true">
+          {" "}
+        </span>,
+      );
+    }
 
     if (props.text.length > 0) {
       inlineNodes.push(<span key="user-message-terminal-context-inline-text">{props.text}</span>);
-    } else if (inlinePrefix.length === 0) {
+    } else if (
+      buildInlineTerminalContextText(props.terminalContexts).length === 0 &&
+      props.diffContextComments.length === 0
+    ) {
       return null;
     }
 

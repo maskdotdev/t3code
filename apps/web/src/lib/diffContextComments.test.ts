@@ -4,6 +4,8 @@ import { type ThreadId } from "@t3tools/contracts";
 import {
   appendDiffContextCommentsToPrompt,
   extractTrailingDiffContextComments,
+  INLINE_DIFF_CONTEXT_COMMENT_PLACEHOLDER,
+  materializeInlineDiffContextCommentPrompt,
   type DiffContextCommentDraft,
 } from "./diffContextComments";
 
@@ -69,6 +71,16 @@ describe("diffContextComments", () => {
       commentCount: 2,
       previewTitle:
         "src/example.ts:+12-14\nFirst line\nSecond line\n\nsrc/old.ts:-5\nLegacy formatting should still parse.",
+      comments: [
+        {
+          header: "src/example.ts:+12-14",
+          body: "First line\nSecond line",
+        },
+        {
+          header: "src/old.ts:-5",
+          body: "Legacy formatting should still parse.",
+        },
+      ],
     });
 
     const legacyPrompt = [
@@ -83,6 +95,38 @@ describe("diffContextComments", () => {
       promptText: "Prompt text",
       commentCount: 1,
       previewTitle: "src/example.ts:+12\nOne line only",
+      comments: [
+        {
+          header: "src/example.ts:+12",
+          body: "One line only",
+        },
+      ],
     });
+  });
+
+  it("materializes inline diff comment placeholders before appending the hidden block", () => {
+    const comment = makeComment({
+      id: "comment-inline",
+      filePath: "src/example.ts",
+      lineStart: 12,
+      lineEnd: 14,
+      body: "Use the shared helper.",
+    });
+
+    expect(materializeInlineDiffContextCommentPrompt("Fix this", [comment])).toBe("Fix this");
+    expect(
+      appendDiffContextCommentsToPrompt(`Fix ${INLINE_DIFF_CONTEXT_COMMENT_PLACEHOLDER} please`, [
+        comment,
+      ]),
+    ).toBe(
+      [
+        "Fix @diff:src/example.ts:+12-14 please",
+        "",
+        "<diff_context_comments>",
+        "- src/example.ts:+12-14:",
+        "  Use the shared helper.",
+        "</diff_context_comments>",
+      ].join("\n"),
+    );
   });
 });

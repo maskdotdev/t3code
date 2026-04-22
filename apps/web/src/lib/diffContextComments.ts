@@ -1,4 +1,10 @@
 import { type ThreadId, type TurnId } from "@t3tools/contracts";
+import {
+  appendPromptContextBlock,
+  buildPromptContextBlock,
+  extractTrailingPromptContextBlock,
+  type PromptContextBlockEntry,
+} from "./promptContextBlock";
 
 export type DiffContextCommentSide = "additions" | "deletions";
 
@@ -22,10 +28,13 @@ export interface ExtractedDiffContextComments {
   promptText: string;
   commentCount: number;
   previewTitle: string | null;
+  comments: ParsedDiffContextCommentEntry[];
 }
 
-const TRAILING_DIFF_CONTEXT_COMMENTS_BLOCK_PATTERN =
-  /\n*<diff_context_comments>\n([\s\S]*?)\n<\/diff_context_comments>\s*$/;
+export type ParsedDiffContextCommentEntry = PromptContextBlockEntry;
+
+const DIFF_CONTEXT_COMMENTS_BLOCK_TAG = "diff_context_comments";
+export const INLINE_DIFF_CONTEXT_COMMENT_PLACEHOLDER = "\uE000";
 
 function formatSideLabel(side: DiffContextCommentSide): string {
   return side === "deletions" ? "-" : "+";
@@ -51,6 +60,20 @@ export function formatDiffContextCommentLabel(comment: {
   return `${comment.filePath}:${formatDiffContextCommentRange(comment)}`;
 }
 
+export function formatInlineDiffContextCommentLabel(
+  comment:
+    | {
+        filePath: string;
+        lineStart: number;
+        lineEnd: number;
+        side: DiffContextCommentSide;
+      }
+    | string,
+): string {
+  const label = typeof comment === "string" ? comment : formatDiffContextCommentLabel(comment);
+  return `@diff:${label}`;
+}
+
 function normalizeCommentBody(body: string): string {
   return body.trim();
 }
@@ -74,109 +97,111 @@ export function buildDiffContextCommentsBlock(
     return "";
   }
 
-  const lines = comments.flatMap((comment, index) => {
-    const scope = formatDiffContextCommentLabel(comment);
-    const bodyLines = normalizeCommentBody(comment.body)
-      .split("\n")
-      .map((line) => `  ${line}`);
-
-    return [`- ${scope}:`, ...bodyLines, ...(index < comments.length - 1 ? [""] : [])];
-  });
-
-  return ["<diff_context_comments>", ...lines, "</diff_context_comments>"].join("\n");
+  return buildPromptContextBlock(
+    DIFF_CONTEXT_COMMENTS_BLOCK_TAG,
+    comments.map((comment) => ({
+      header: formatDiffContextCommentLabel(comment),
+      bodyLines: normalizeCommentBody(comment.body)
+        .split("\n")
+        .map((line) => `  ${line}`),
+    })),
+  );
 }
 
 export function appendDiffContextCommentsToPrompt(
   prompt: string,
   comments: ReadonlyArray<DiffContextCommentDraft>,
 ): string {
-  const trimmedPrompt = prompt.trim();
+  const materializedPrompt = materializeInlineDiffContextCommentPrompt(prompt, comments);
   const commentBlock = buildDiffContextCommentsBlock(comments);
 
-  if (commentBlock.length === 0) {
-    return trimmedPrompt;
-  }
-
-  return trimmedPrompt.length > 0 ? `${trimmedPrompt}\n\n${commentBlock}` : commentBlock;
+  return appendPromptContextBlock(materializedPrompt, commentBlock);
 }
 
 export function extractTrailingDiffContextComments(prompt: string): ExtractedDiffContextComments {
-  const match = TRAILING_DIFF_CONTEXT_COMMENTS_BLOCK_PATTERN.exec(prompt);
-  if (!match) {
-    return {
-      promptText: prompt,
-      commentCount: 0,
-      previewTitle: null,
-    };
-  }
-
-  const promptText = prompt.slice(0, match.index).replace(/\n+$/, "");
-  const parsedComments = parseDiffContextCommentEntries(match[1] ?? "");
+  const extracted = extractTrailingPromptContextBlock(prompt, DIFF_CONTEXT_COMMENTS_BLOCK_TAG, {
+    allowSingleLineEntries: true,
+  });
 
   return {
-    promptText,
-    commentCount: parsedComments.length,
-    previewTitle:
-      parsedComments.length > 0
-        ? parsedComments
-            .map(({ header, body }) => (body.length > 0 ? `${header}\n${body}` : header))
-            .join("\n\n")
-        : null,
+    promptText: extracted.promptText,
+    commentCount: extracted.entries.length,
+    previewTitle: extracted.previewTitle,
+    comments: extracted.entries,
   };
 }
 
-function parseDiffContextCommentEntries(block: string): Array<{ header: string; body: string }> {
-  const entries: Array<{ header: string; body: string }> = [];
-  let current: { header: string; bodyLines: string[] } | null = null;
+export function materializeInlineDiffContextCommentPrompt(
+  prompt: string,
+  comments: ReadonlyArray<{
+    filePath: string;
+    lineStart: number;
+    lineEnd: number;
+    side: DiffContextCommentSide;
+  }>,
+): string {
+  let nextCommentIndex = 0;
+  let result = "";
 
-  const commitCurrent = () => {
-    if (!current) {
-      return;
-    }
-
-    entries.push({
-      header: current.header,
-      body: current.bodyLines.join("\n").trimEnd(),
-    });
-    current = null;
-  };
-
-  for (const rawLine of block.split("\n")) {
-    const singleLineMatch = /^- (.+?): (.+)$/.exec(rawLine);
-    if (singleLineMatch) {
-      commitCurrent();
-      entries.push({
-        header: singleLineMatch[1]!,
-        body: singleLineMatch[2]!,
-      });
+  for (const char of prompt) {
+    if (char !== INLINE_DIFF_CONTEXT_COMMENT_PLACEHOLDER) {
+      result += char;
       continue;
     }
-
-    const blockHeaderMatch = /^- (.+?):$/.exec(rawLine);
-    if (blockHeaderMatch) {
-      commitCurrent();
-      current = {
-        header: blockHeaderMatch[1]!,
-        bodyLines: [],
-      };
+    const comment = comments[nextCommentIndex] ?? null;
+    nextCommentIndex += 1;
+    if (!comment) {
       continue;
     }
-
-    if (!current) {
-      continue;
-    }
-
-    if (rawLine.startsWith("  ")) {
-      current.bodyLines.push(rawLine.slice(2));
-      continue;
-    }
-
-    if (rawLine.length === 0) {
-      current.bodyLines.push("");
-    }
+    result += formatInlineDiffContextCommentLabel(comment);
   }
 
-  commitCurrent();
+  return result;
+}
 
-  return entries;
+export function countInlineDiffContextCommentPlaceholders(prompt: string): number {
+  let count = 0;
+  for (const char of prompt) {
+    if (char === INLINE_DIFF_CONTEXT_COMMENT_PLACEHOLDER) {
+      count += 1;
+    }
+  }
+  return count;
+}
+
+export function ensureInlineDiffContextCommentPlaceholders(
+  prompt: string,
+  diffContextCommentCount: number,
+): string {
+  const missingCount = diffContextCommentCount - countInlineDiffContextCommentPlaceholders(prompt);
+  if (missingCount <= 0) {
+    return prompt;
+  }
+  return `${INLINE_DIFF_CONTEXT_COMMENT_PLACEHOLDER.repeat(missingCount)}${prompt}`;
+}
+
+export function stripInlineDiffContextCommentPlaceholders(prompt: string): string {
+  return prompt.replaceAll(INLINE_DIFF_CONTEXT_COMMENT_PLACEHOLDER, "");
+}
+
+export function removeInlineDiffContextCommentPlaceholder(
+  prompt: string,
+  contextIndex: number,
+): { prompt: string; cursor: number } {
+  let seenCount = 0;
+  for (let index = 0; index < prompt.length; index += 1) {
+    if (prompt[index] !== INLINE_DIFF_CONTEXT_COMMENT_PLACEHOLDER) {
+      continue;
+    }
+    if (seenCount === contextIndex) {
+      const nextChar = prompt[index + 1];
+      const removeEnd = nextChar === " " ? index + 2 : index + 1;
+      return {
+        prompt: prompt.slice(0, index) + prompt.slice(removeEnd),
+        cursor: index,
+      };
+    }
+    seenCount += 1;
+  }
+  return { prompt, cursor: prompt.length };
 }

@@ -1,4 +1,4 @@
-import { useEffect, useRef } from "react";
+import { useEffect, useRef, type ReactNode } from "react";
 import { Button } from "./ui/button";
 
 interface DiffContextCommentDraftProps {
@@ -18,10 +18,40 @@ function formatLineRange(start: number, end: number): string {
   return start === end ? `${start}` : `${start}-${end}`;
 }
 
-export const DIFF_CONTEXT_COMMENT_CARD_STYLE = {
+const DIFF_CONTEXT_COMMENT_CARD_STYLE = {
   width: "min(44rem, calc(100cqw - 3.5rem), calc(100vw - 7.5rem))",
   maxWidth: "100%",
 } as const;
+
+function DiffContextCommentCardFrame({ children }: { children: ReactNode }) {
+  return (
+    <div
+      className="ml-2 mr-5 my-1 min-w-0"
+      style={DIFF_CONTEXT_COMMENT_CARD_STYLE}
+      onClick={(event) => event.stopPropagation()}
+      onMouseDown={(event) => event.stopPropagation()}
+      onPointerDown={(event) => event.stopPropagation()}
+    >
+      {children}
+    </div>
+  );
+}
+
+export function DiffContextCommentPreview(props: { body: string; onEdit: () => void }) {
+  const { body, onEdit } = props;
+
+  return (
+    <DiffContextCommentCardFrame>
+      <button
+        type="button"
+        onClick={onEdit}
+        className="w-full rounded-md border border-border bg-card px-4 py-3 text-left text-sm text-foreground transition-colors duration-200 hover:border-ring/45 focus-visible:border-ring/45 focus-visible:outline-none"
+      >
+        <p className="whitespace-pre-wrap break-words">{body}</p>
+      </button>
+    </DiffContextCommentCardFrame>
+  );
+}
 
 export function DiffContextCommentDraft({
   filePath,
@@ -49,13 +79,7 @@ export function DiffContextCommentDraft({
   }, [filePath, lineStart, lineEnd]);
 
   return (
-    <div
-      className="ml-2 mr-5 my-1 min-w-0"
-      style={DIFF_CONTEXT_COMMENT_CARD_STYLE}
-      onClick={(event) => event.stopPropagation()}
-      onMouseDown={(event) => event.stopPropagation()}
-      onPointerDown={(event) => event.stopPropagation()}
-    >
+    <DiffContextCommentCardFrame>
       <div className="group rounded-md border border-border bg-card transition-colors duration-200 focus-within:border-ring/45">
         <div className="relative">
           <textarea
@@ -95,6 +119,6 @@ export function DiffContextCommentDraft({
           </div>
         </div>
       </div>
-    </div>
+    </DiffContextCommentCardFrame>
   );
 }

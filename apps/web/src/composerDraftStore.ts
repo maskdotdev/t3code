@@ -42,6 +42,9 @@ import {
 import {
   type DiffContextCommentDraft,
   type DiffContextCommentDraftUpdate,
+  ensureInlineDiffContextCommentPlaceholders,
+  removeInlineDiffContextCommentPlaceholder,
+  stripInlineDiffContextCommentPlaceholders,
 } from "./lib/diffContextComments";
 import { create } from "zustand";
 import { createJSONStorage, persist } from "zustand/middleware";
@@ -353,6 +356,10 @@ interface ComposerDraftStoreState {
   setStickyModelSelection: (modelSelection: ModelSelection | null | undefined) => void;
   setPrompt: (threadRef: ComposerThreadTarget, prompt: string) => void;
   setTerminalContexts: (threadRef: ComposerThreadTarget, contexts: TerminalContextDraft[]) => void;
+  setDiffContextComments: (
+    threadRef: ComposerThreadTarget,
+    comments: DiffContextCommentDraft[],
+  ) => void;
   setModelSelection: (
     threadRef: ComposerThreadTarget,
     modelSelection: ModelSelection | null | undefined,
@@ -609,6 +616,28 @@ function normalizeDiffContextCommentDraft(value: unknown): DiffContextCommentDra
     body,
     createdAt,
   };
+}
+
+function normalizeDiffContextCommentsForThread(
+  threadId: ThreadId,
+  comments: ReadonlyArray<DiffContextCommentDraft>,
+): DiffContextCommentDraft[] {
+  const existingIds = new Set<string>();
+  const normalizedComments: DiffContextCommentDraft[] = [];
+
+  for (const comment of comments) {
+    const normalizedComment = normalizeDiffContextCommentDraft({
+      ...comment,
+      threadId,
+    });
+    if (!normalizedComment || existingIds.has(normalizedComment.id)) {
+      continue;
+    }
+    normalizedComments.push(normalizedComment);
+    existingIds.add(normalizedComment.id);
+  }
+
+  return normalizedComments;
 }
 
 function shouldRemoveDraft(draft: ComposerThreadDraftState): boolean {
@@ -2359,6 +2388,32 @@ const composerDraftStore = create<ComposerDraftStoreState>()(
             return { draftsByThreadKey: nextDraftsByThreadKey };
           });
         },
+        setDiffContextComments: (threadRef, comments) => {
+          const threadKey = resolveComposerDraftKey(get(), threadRef);
+          const threadId = resolveComposerThreadId(get(), threadRef);
+          if (!threadKey || !threadId) {
+            return;
+          }
+          const normalizedComments = normalizeDiffContextCommentsForThread(threadId, comments);
+          set((state) => {
+            const existing = state.draftsByThreadKey[threadKey] ?? createEmptyThreadDraft();
+            const nextDraft: ComposerThreadDraftState = {
+              ...existing,
+              prompt: ensureInlineDiffContextCommentPlaceholders(
+                existing.prompt,
+                normalizedComments.length,
+              ),
+              diffContextComments: normalizedComments,
+            };
+            const nextDraftsByThreadKey = { ...state.draftsByThreadKey };
+            if (shouldRemoveDraft(nextDraft)) {
+              delete nextDraftsByThreadKey[threadKey];
+            } else {
+              nextDraftsByThreadKey[threadKey] = nextDraft;
+            }
+            return { draftsByThreadKey: nextDraftsByThreadKey };
+          });
+        },
         setModelSelection: (threadRef, modelSelection) => {
           const threadKey = resolveComposerDraftKey(get(), threadRef) ?? "";
           if (threadKey.length === 0) {
@@ -2815,18 +2870,31 @@ const composerDraftStore = create<ComposerDraftStoreState>()(
           });
         },
         addDiffContextComment: (threadRef, comment) => {
-          const threadKey = resolveComposerDraftKey(get(), threadRef) ?? "";
-          if (threadKey.length === 0) {
+          const threadKey = resolveComposerDraftKey(get(), threadRef);
+          const threadId = resolveComposerThreadId(get(), threadRef);
+          if (!threadKey || !threadId) {
             return;
           }
           set((state) => {
             const existing = state.draftsByThreadKey[threadKey] ?? createEmptyThreadDraft();
+            const acceptedComments = normalizeDiffContextCommentsForThread(threadId, [
+              ...existing.diffContextComments,
+              comment,
+            ]).slice(existing.diffContextComments.length);
+            if (acceptedComments.length === 0) {
+              return state;
+            }
+            const nextDiffContextComments = [...existing.diffContextComments, ...acceptedComments];
             return {
               draftsByThreadKey: {
                 ...state.draftsByThreadKey,
                 [threadKey]: {
                   ...existing,
-                  diffContextComments: [...existing.diffContextComments, comment],
+                  prompt: ensureInlineDiffContextCommentPlaceholders(
+                    existing.prompt,
+                    nextDiffContextComments.length,
+                  ),
+                  diffContextComments: nextDiffContextComments,
                 },
               },
             };
@@ -2874,8 +2942,15 @@ const composerDraftStore = create<ComposerDraftStoreState>()(
             if (!current) {
               return state;
             }
+            const commentIndex = current.diffContextComments.findIndex(
+              (comment) => comment.id === commentId,
+            );
             const nextDraft: ComposerThreadDraftState = {
               ...current,
+              prompt:
+                commentIndex >= 0
+                  ? removeInlineDiffContextCommentPlaceholder(current.prompt, commentIndex).prompt
+                  : current.prompt,
               diffContextComments: current.diffContextComments.filter(
                 (comment) => comment.id !== commentId,
               ),
@@ -2901,6 +2976,7 @@ const composerDraftStore = create<ComposerDraftStoreState>()(
             }
             const nextDraft: ComposerThreadDraftState = {
               ...current,
+              prompt: stripInlineDiffContextCommentPlaceholders(current.prompt),
               diffContextComments: [],
             };
             const nextDraftsByThreadKey = { ...state.draftsByThreadKey };
