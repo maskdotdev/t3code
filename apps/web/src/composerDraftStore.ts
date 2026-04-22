@@ -1524,9 +1524,9 @@ function normalizePersistedDraftsByThreadId(
       draftCandidate.interactionMode === "plan" || draftCandidate.interactionMode === "default"
         ? draftCandidate.interactionMode
         : null;
-    const prompt = ensureInlineTerminalContextPlaceholders(
-      promptCandidate,
-      terminalContexts.length,
+    const prompt = ensureInlineDiffContextCommentPlaceholders(
+      ensureInlineTerminalContextPlaceholders(promptCandidate, terminalContexts.length),
+      diffContextComments.length,
     );
     // If the draft already has the v3 shape, use it directly
     const legacyDraftCandidate = draftValue as LegacyPersistedComposerThreadDraftState;

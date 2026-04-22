@@ -569,6 +569,56 @@ describe("composerDraftStore terminal contexts", () => {
     ]);
   });
 
+  it("hydrates persisted diff comments with missing inline placeholders", () => {
+    const persistApi = useComposerDraftStore.persist as unknown as {
+      getOptions: () => {
+        merge: (
+          persistedState: unknown,
+          currentState: ReturnType<typeof useComposerDraftStore.getState>,
+        ) => ReturnType<typeof useComposerDraftStore.getState>;
+      };
+    };
+    const mergedState = persistApi.getOptions().merge(
+      {
+        draftsByThreadId: {
+          [threadId]: {
+            prompt: "Please handle this",
+            attachments: [],
+            diffContextComments: [
+              {
+                id: "comment-rehydrated",
+                threadId,
+                turnId: null,
+                filePath: "src/example.ts",
+                lineStart: 12,
+                lineEnd: 12,
+                side: "additions",
+                body: "Use the shared helper.",
+                createdAt: "2026-03-13T12:00:00.000Z",
+              },
+            ],
+          },
+        },
+        draftThreadsByThreadId: {},
+        projectDraftThreadIdByProjectKey: {},
+      },
+      useComposerDraftStore.getInitialState(),
+    );
+
+    const draft = mergedState.draftsByThreadKey[threadKeyFor(threadId)];
+    expect(draft?.prompt).toBe(`${INLINE_DIFF_CONTEXT_COMMENT_PLACEHOLDER}Please handle this`);
+    expect(draft?.diffContextComments).toMatchObject([
+      {
+        id: "comment-rehydrated",
+        filePath: "src/example.ts",
+        lineStart: 12,
+        lineEnd: 12,
+        side: "additions",
+        body: "Use the shared helper.",
+      },
+    ]);
+  });
+
   it("sanitizes malformed persisted drafts during merge", () => {
     const persistApi = useComposerDraftStore.persist as unknown as {
       getOptions: () => {

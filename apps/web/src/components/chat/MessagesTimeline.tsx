@@ -312,6 +312,7 @@ function TimelineRowContent({ row }: { row: TimelineRow }) {
             extractedDiffComments.promptText,
           );
           const terminalContexts = displayedUserMessage.contexts;
+          const userMessageCopyText = row.message.text;
           const canRevertAgentWork = typeof row.revertTurnCount === "number";
           return (
             <div className="flex justify-end">
@@ -362,9 +363,7 @@ function TimelineRowContent({ row }: { row: TimelineRow }) {
                 )}
                 <div className="mt-1.5 flex items-center justify-end gap-2">
                   <div className="flex items-center gap-1.5 opacity-0 transition-opacity duration-200 focus-within:opacity-100 group-hover:opacity-100">
-                    {displayedUserMessage.copyText && (
-                      <MessageCopyButton text={displayedUserMessage.copyText} />
-                    )}
+                    {userMessageCopyText && <MessageCopyButton text={userMessageCopyText} />}
                     {canRevertAgentWork && (
                       <Button
                         type="button"
