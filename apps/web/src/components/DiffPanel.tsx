@@ -207,6 +207,7 @@ export default function DiffPanel({ mode = "inline" }: DiffPanelProps) {
   const activeThread = useStore(
     useMemo(() => createThreadSelectorByRef(routeThreadRef), [routeThreadRef]),
   );
+  const activeThreadEnvironmentId = activeThread?.environmentId ?? null;
   const activeProjectId = activeThread?.projectId ?? null;
   const activeProject = useStore((store) =>
     activeThread && activeProjectId
@@ -334,8 +335,11 @@ export default function DiffPanel({ mode = "inline" }: DiffPanelProps) {
     );
   }, [renderablePatch]);
   const activeThreadRef = useMemo(
-    () => (activeThread ? scopeThreadRef(activeThread.environmentId, activeThread.id) : null),
-    [activeThread?.environmentId, activeThread?.id],
+    () =>
+      activeThreadEnvironmentId && activeThreadId
+        ? scopeThreadRef(activeThreadEnvironmentId, activeThreadId)
+        : null,
+    [activeThreadEnvironmentId, activeThreadId],
   );
   const {
     editingCommentBody,
